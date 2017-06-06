@@ -24,7 +24,7 @@ def get_norm_layer(norm_type):
         print('normalization layer [%s] is not found' % norm)
     return norm_layer
 
-def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropout=False, gpu_ids=[]):
+def define_G(input_nc, output_nc, latent_resnet_block, ngf, which_model_netG, norm='batch', use_dropout=False, gpu_ids=[]):
     netG = None
     use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
@@ -32,10 +32,21 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropo
     if use_gpu:
         assert(torch.cuda.is_available())
 
+    if latent_resnet_block >= 0:
+        assert which_model_netG.find('resnet') != -1
+
     if which_model_netG == 'resnet_9blocks':
-        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9, gpu_ids=gpu_ids)
+        if latent_resnet_block >= 0:
+            # netG = ResnetLatentGenerator(input_nc, output_nc, ngf, norm_layer, use_dropout=use_dropout, n_blocks=9, latent_resnet_block=latent_resnet_block, gpu_ids=gpu_ids)
+            netG = LatentNet(input_nc, output_nc, norm_layer, gpu_ids=gpu_ids)
+        else:
+            netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer, use_dropout=use_dropout, n_blocks=9, gpu_ids=gpu_ids)
     elif which_model_netG == 'resnet_6blocks':
-        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6, gpu_ids=gpu_ids)
+        if latent_resnet_block >= 0:
+            # netG = ResnetLatentGenerator(input_nc, output_nc, ngf, norm_layer, use_dropout=use_dropout, n_blocks=6, latent_resnet_block=latent_resnet_block, gpu_ids=gpu_ids)
+            netG = LatentNet(input_nc, output_nc, norm_layer, gpu_ids=gpu_ids)
+        else:
+            netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer, use_dropout=use_dropout, n_blocks=6, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_128':
         netG = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_256':
@@ -67,6 +78,13 @@ def define_D(input_nc, ndf, which_model_netD,
         netD.cuda(device_id=gpu_ids[0])
     netD.apply(weights_init)
     return netD
+
+
+def define_cycle_featurizer(netD, k = 1, gpu_ids=[]):
+    if k == 0:
+        return nn.Identity()
+    else:
+        return KthLayerDiscriminatorFeatureExtractor(netD, k, gpu_ids)
 
 
 def print_network(net):
@@ -123,6 +141,106 @@ class GANLoss(nn.Module):
         return self.loss(input, target_tensor)
 
 
+class LatentNet(nn.Module):
+    def __init__(self, input_nc, output_nc, norm_layer=nn.BatchNorm2d, gpu_ids=[]):
+        super(LatentNet, self).__init__()
+        self.input_nc = input_nc
+        self.output_nc = output_nc
+        self.gpu_ids = gpu_ids
+
+        n_layers = 2
+        # resnet_before_layer = 1
+        n_resblock_each_side = 4
+
+
+        ngf = 64
+        kw = 4
+        padw = int(np.floor((kw-1)/2))
+        to_latent_sequence = [
+            nn.Conv2d(input_nc, ngf, kernel_size=kw, padding=padw),
+            norm_layer(ngf, affine=True),
+            nn.ReLU(True),
+        ]
+
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers + 1):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2**n, 8)
+            to_latent_sequence += [
+                nn.Conv2d(ngf * nf_mult_prev, ngf * nf_mult,
+                                kernel_size=kw, stride=2, padding=padw),
+                # TODO: use InstanceNorm
+                norm_layer(ngf * nf_mult, affine=True),
+                nn.ReLU(True)
+            ]
+
+        for _ in range(n_resblock_each_side):
+            to_latent_sequence += [
+                ResnetBlock(ngf * nf_mult, 'zero', norm_layer=norm_layer, use_dropout=False)
+            ]
+
+        to_latent_sequence += [
+            nn.Conv2d(ngf * nf_mult, int(np.ceil(ngf * nf_mult / 2)), kernel_size=kw, padding=padw, stride = 2),
+            norm_layer(int(np.ceil(ngf * nf_mult / 2)), affine=True),
+            nn.ReLU(True)
+        ]
+        to_latent_sequence += [
+            nn.Conv2d(int(np.ceil(ngf * nf_mult / 2)), int(np.ceil(ngf * nf_mult / 4)), kernel_size=3, stride = 3),
+            nn.ReLU(True)
+        ]
+
+
+        from_latent_sequence = []
+        for module in to_latent_sequence[3:][::-1]:
+            if module.__class__.__name__.find('Conv2d') != -1:
+                if type(module.stride) == tuple:
+                    output_padding = tuple(s - 1 for s in module.stride)
+                else:
+                    output_padding = module.stride - 1
+                from_latent_sequence += [
+                    nn.ConvTranspose2d(module.out_channels, module.in_channels,
+                                    kernel_size=module.kernel_size, stride=module.stride, padding=module.padding, output_padding=output_padding),
+                    # TODO: use InstanceNorm
+                    norm_layer(module.in_channels, affine=True),
+                    nn.ReLU(True)
+                ]
+            elif module.__class__.__name__.find('ResnetBlock') != -1:
+                from_latent_sequence += [
+                    ResnetBlock(module.dim, 'zero', norm_layer=norm_layer, use_dropout=False)
+                ]
+
+        from_latent_sequence += [nn.Conv2d(ngf, output_nc, kernel_size=kw, padding=2)]
+        from_latent_sequence += [nn.Tanh()]
+
+        self.model = nn.Sequential(*(to_latent_sequence + from_latent_sequence))
+        self.to_latent_model = nn.Sequential(*to_latent_sequence)
+        self.from_latent_model = nn.Sequential(*from_latent_sequence)
+
+    def forward(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
+        else:
+            return self.model(input)
+
+    def forward_to_latent(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.to_latent_model, input, self.gpu_ids)
+        else:
+            return self.to_latent_model(input)
+
+    def forward_from_latent(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.from_latent_model, input, self.gpu_ids)
+        else:
+            return self.from_latent_model(input)
+
+    def forward_latent(self, input):
+        latent = self.forward_to_latent(input)
+        print(latent.size())
+        return latent, self.forward_from_latent(latent)
+
+
 # Defines the generator that consists of Resnet blocks between a few
 # downsampling/upsampling operations.
 # Code and idea originally from Justin Johnson's architecture.
@@ -171,11 +289,44 @@ class ResnetGenerator(nn.Module):
         else:
             return self.model(input)
 
+class ResnetLatentGenerator(ResnetGenerator):
+    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, latent_resnet_block=3, gpu_ids=[]):
+        super(ResnetLatentGenerator, self).__init__(input_nc, output_nc, ngf, norm_layer, use_dropout, n_blocks, gpu_ids)
+
+        modules = list(self.model)
+
+        i = 0
+        while latent_resnet_block >= 0:
+            if modules[i].__class__.__name__.find('ResnetBlock') != -1:
+                latent_resnet_block -= 1
+            i += 1
+
+        self.latent = None
+        # modules[i - 1].register_forward_hook(lambda m, i, o: self.__setattr__('latent', o))
+        self.to_latent_model = nn.Sequential(*modules[:i])
+        self.from_latent_model = nn.Sequential(*modules[i:])
+
+    def forward_to_latent(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.to_latent_model, input, self.gpu_ids)
+        else:
+            return self.to_latent_model(input)
+
+    def forward_from_latent(self, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.from_latent_model, input, self.gpu_ids)
+        else:
+            return self.from_latent_model(input)
+
+    def forward_latent(self, input):
+        latent = self.forward_to_latent(input)
+        return latent, self.forward_from_latent(latent)
 
 # Define a resnet block
 class ResnetBlock(nn.Module):
     def __init__(self, dim, padding_type, norm_layer, use_dropout):
         super(ResnetBlock, self).__init__()
+        self.dim = dim
         self.conv_block = self.build_conv_block(dim, padding_type, norm_layer, use_dropout)
 
     def build_conv_block(self, dim, padding_type, norm_layer, use_dropout):
@@ -314,7 +465,7 @@ class NLayerDiscriminator(nn.Module):
         sequence += [
             nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
                             kernel_size=kw, stride=1, padding=padw),
-            # TODO: useInstanceNorm
+            # TODO: use InstanceNorm
             norm_layer(ndf * nf_mult, affine=True),
             nn.LeakyReLU(0.2, True)
         ]
@@ -331,3 +482,30 @@ class NLayerDiscriminator(nn.Module):
             return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
         else:
             return self.model(input)
+
+# Defines the PatchGAN discriminator with the specified arguments.
+class KthLayerDiscriminatorFeatureExtractor(nn.Module):
+    def __init__(self, netD, k = 1, gpu_ids = []):
+        super(KthLayerDiscriminatorFeatureExtractor, self).__init__()
+        self.gpu_ids = gpu_ids
+
+        D_modules = netD.model
+
+        modules = []
+        i = 0
+        while True:
+            if D_modules[i].__class__.__name__.find('Conv') != -1:
+                k -= 1
+                if k < 0:
+                    break
+            modules.append(D_modules[i])
+            i += 1
+
+        self.model = nn.Sequential(*modules)
+
+    def forward(self, input):
+        if len(self.gpu_ids)  and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
+        else:
+            return self.model(input)
+

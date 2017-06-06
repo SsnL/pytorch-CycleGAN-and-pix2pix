@@ -105,7 +105,7 @@ class Pix2PixModel(BaseModel):
 
         self.loss_G.backward()
 
-    def optimize_parameters(self):
+    def optimize_parameters(self, epoch):
         self.forward()
 
         self.optimizer_D.zero_grad()
