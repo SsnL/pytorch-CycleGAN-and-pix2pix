@@ -37,16 +37,15 @@ class Pix2PixModel(BaseModel):
 
         if self.isTrain:
             self.fake_AB_pool = ImagePool(opt.pool_size)
-            self.old_lr = opt.lr
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
             self.criterionL1 = torch.nn.L1Loss()
 
             # initialize optimizers
             self.optimizer_G = torch.optim.Adam(self.netG.parameters(),
-                                                lr=opt.lr, betas=(opt.beta1, 0.999))
+                                                lr=self.current_lr, betas=(opt.beta1, 0.999))
             self.optimizer_D = torch.optim.Adam(self.netD.parameters(),
-                                                lr=opt.lr, betas=(opt.beta1, 0.999))
+                                                lr=self.current_lr, betas=(opt.beta1, 0.999))
 
         print('---------- Networks initialized -------------')
         networks.print_network(self.netG)
@@ -135,12 +134,8 @@ class Pix2PixModel(BaseModel):
         self.save_network(self.netG, 'G', label, self.gpu_ids)
         self.save_network(self.netD, 'D', label, self.gpu_ids)
 
-    def update_learning_rate(self):
-        lrd = self.opt.lr / self.opt.niter_decay
-        lr = self.old_lr - lrd
+    def set_learning_rate(self, lr):
         for param_group in self.optimizer_D.param_groups:
             param_group['lr'] = lr
         for param_group in self.optimizer_G.param_groups:
             param_group['lr'] = lr
-        print('update learning rate: %f -> %f' % (self.old_lr, lr))
-        self.old_lr = lr

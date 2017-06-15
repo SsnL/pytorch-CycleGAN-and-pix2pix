@@ -14,8 +14,9 @@ model = create_model(opt)
 visualizer = Visualizer(opt)
 
 total_steps = 0
+total_niter = opt.niter_warmup + opt.niter + opt.niter_decay
 
-for epoch in range(1, opt.niter + opt.niter_decay + 1):
+for epoch in range(1, total_niter + 1):
     epoch_start_time = time.time()
     for i, data in enumerate(dataset):
         iter_start_time = time.time()
@@ -46,7 +47,6 @@ for epoch in range(1, opt.niter + opt.niter_decay + 1):
         model.save(epoch)
 
     print('End of epoch %d / %d \t Time Taken: %d sec' %
-          (epoch, opt.niter + opt.niter_decay, time.time() - epoch_start_time))
+          (epoch, total_niter, time.time() - epoch_start_time))
 
-    if epoch > opt.niter:
-        model.update_learning_rate()
+    model.update_learning_rate(epoch)

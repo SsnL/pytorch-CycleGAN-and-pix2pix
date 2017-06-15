@@ -24,7 +24,12 @@ class BaseOptions():
         self.parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
         self.parser.add_argument('--dataset_mode', type=str, default='unaligned', help='chooses how datasets are loaded. [unaligned | aligned | single]')
         self.parser.add_argument('--model', type=str, default='cycle_gan',
-                                 help='chooses which model to use. cycle_gan, pix2pix, test')
+                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, multi_cycle_gan, test, ...')
+        self.parser.add_argument('--num_datasets', type=int, default=2,
+                                 help='number of datasets, relavent to multi_cycle_gan')
+        self.parser.add_argument('--hub', type=str, default='A',
+                                 help='which hub to use in multi_cycle_gan, "paired" means no hub, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
+        self.parser.add_argument('--ncs', nargs='+', type=int, default=[3,3], help='# of output image channels for each dataset')
         self.parser.add_argument('--which_direction', type=str, default='AtoB', help='AtoB or BtoA')
         self.parser.add_argument('--nThreads', default=2, type=int, help='# threads for loading data')
         self.parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')

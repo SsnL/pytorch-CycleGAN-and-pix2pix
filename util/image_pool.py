@@ -9,7 +9,7 @@ class ImagePool():
             self.num_imgs = 0
             self.images = []
 
-    def query(self, images):
+    def query(self, images, size = None):
         if self.pool_size == 0:
             return images
         return_images = []
@@ -28,5 +28,7 @@ class ImagePool():
                     return_images.append(tmp)
                 else:
                     return_images.append(image)
+        if size is not None and len(return_images) > size:
+            return_images = np.random.choice(return_images, size, False)
         return_images = Variable(torch.cat(return_images, 0))
         return return_images
