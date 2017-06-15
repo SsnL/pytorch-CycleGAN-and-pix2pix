@@ -61,7 +61,15 @@ class PairedData(object):
 class UnalignedDataLoader(BaseDataLoader):
     def initialize(self, opt):
         BaseDataLoader.initialize(self, opt)
-        transformations = [transforms.Scale(opt.loadSize, interpolation = Image.BICUBIC),
+
+        if opt.interpolation == 'bicubic':
+            interpolation = Image.BICUBIC 
+        elif opt.interpolation == 'bilinear':
+            interpolation = Image.bilinear
+        else:
+            ValueError("Interpolation scheme [%s] not recognized." % opt.interpolation) 
+
+        transformations = [transforms.Scale(opt.loadSize, interpolation = interpolation),
                            transforms.RandomCrop(opt.fineSize),
                            transforms.ToTensor(),
                            transforms.Normalize((0.5, 0.5, 0.5),
