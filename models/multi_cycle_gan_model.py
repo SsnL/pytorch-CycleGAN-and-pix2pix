@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import os
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from torch.autograd import Variable
 import itertools
 import util.util as util
@@ -11,9 +11,9 @@ from . import networks
 import sys
 import string
 
-class MultiCycleGANWithHubModel(BaseModel):
+class MultiCycleGANModel(BaseModel):
     def name(self):
-        return 'MultiCycleGANWithHubModel'
+        return 'MultiCycleGANModel'
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
@@ -22,17 +22,10 @@ class MultiCycleGANWithHubModel(BaseModel):
         size = opt.fineSize
         num_datasets = self.num_datasets = opt.num_datasets
 
-        if opt.hub.isdigit():
-            raise NotImplemented
-        else:
-            hub = self.hub = opt.hub
-
         if opt.identity > 0:
             raise NotImplemented
 
-        assert len(opt.ncs) == len(opt.lambdas) == num_datasets
-
-        self.non_hub_multiplier = opt.non_hub_multiplier
+        assert len(opt.ncs) == num_datasets
 
         self.lambdas = {}
         self.inputs = {}
@@ -41,21 +34,57 @@ class MultiCycleGANWithHubModel(BaseModel):
             self.lambdas[label] = lamda
             self.inputs[label] = self.Tensor(nb, nc, size, size)
 
-        # load/define networks
-        # for each (non-hub) dataset D:
-        #     Encoder: D => hub
-        #     Decoder: hub => D
-        self.encoders = {}
-        self.decorders = {}
+        # preprocess with cycles
+        assert len(opt.cycle_lengths) == len(opt.cycle_weights) == len(opt.cycle_num_samples)
 
-        hub_nc = opt.ncs[string.ascii_uppercase.find(hub)]
+        cl, cw, cn = zip(*list(sorted(zip(opt.cycle_lengths, opt.cycle_weights, opt.cycle_num_samples))))
 
-        for label, nc in zip(self.inputs, opt.ncs):
-            if label == hub:
+        self.sample_cycle_lengths = []
+        self.sample_cycle_weights = []
+        self.sample_cycle_num = []
+        self.exact_cycles = {label: [] for label in self.inputs}
+
+        all_mids = {l: {l: [[]]} for l in self.inputs}
+        last_exact_l = 1
+
+        # exact cycles
+        for l, w, n in zip(cl, cw, cn):
+            if l < 2:
+                raise ValueError("Cycle length must be at least 2.")
+            if l == last_exact_l:
+                raise ValueError("Cycle lengths must be distinct.")
+            if n > 0:
+                self.sample_cycle_lengths.append(l)
+                self.sample_cycle_weights.append(w)
+                self.sample_cycle_num.append(n)
                 continue
-            self.encoders[label] = networks.define_G(nc, hub_nc,
-                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
-            self.decorders[label] = networks.define_G(hub_nc, nc,
+            total = (num_datasets - 1) * (num_datasets - 2) ** (l - 2)
+            for label in self.inputs:
+                mids = all_mids[label]
+                for _ in range(last_exact_l - 1, l - 1):
+                    next_mids = defaultdict(list)
+                    for last_label, so_fars in mids.items():
+                        for next_label in self.inputs:
+                            if next_label == last_label or next_label == label:
+                                continue
+                            next_mids[next_label] += [so_far + [next_label] for so_far in so_fars]
+                    mids = next_mids
+                self.exact_cycles[label] += [((label,) + tuple(mid) + (label,), w / total) for mid in itertools.chain(*mids.values())]
+                all_mids[label] = mids
+            last_exact_l = l
+        # import pdb; pdb.set_trace()
+
+        print('----------- Exact cycles --------------')
+        for cycles in self.exact_cycles.values():
+            for cycle, weight in cycles:
+                print('%s\t%.4f' % ('->'.join(cycle), weight))
+        print('---------------------------------------')
+
+        # load/define networks
+        self.Gs = {}
+
+        for (label, nc), (to_label, to_nc) in itertools.permutations(zip(self.inputs, opt.ncs), 2):
+            self.Gs[(label, to_label)] = networks.define_G(nc, to_nc,
                                      opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
 
         if self.isTrain:
@@ -68,9 +97,8 @@ class MultiCycleGANWithHubModel(BaseModel):
 
         if not self.isTrain or opt.continue_train:
             which_epoch = opt.which_epoch
-            for label in self.inputs:
-                self.load_network(self.encoders[label], 'enc_' + label, which_epoch)
-                self.load_network(self.decorders[label], 'dec_' + label, which_epoch)
+            for label, to_label in self.Gs:
+                self.load_network(self.Gs[(label, to_label)], 'G_' + label + to_label, which_epoch)
             if self.isTrain:
                 for label in self.inputs:
                     self.load_network(self.Ds[label], 'D_' + label, which_epoch)
@@ -86,7 +114,7 @@ class MultiCycleGANWithHubModel(BaseModel):
             self.criterionIdt = torch.nn.L1Loss()
 
             # initialize optimizers
-            G_params = list(e.parameters() for e in self.encoders.values()) + list(d.parameters() for d in self.decorders.values())
+            G_params = list(netG.parameters() for netG in self.Gs.values())
             self.optimizer_G = torch.optim.Adam(itertools.chain(*G_params),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
             self.optimizers_D = {}
@@ -102,11 +130,37 @@ class MultiCycleGANWithHubModel(BaseModel):
             # networks.print_network(self.netD_B)
             # print('-----------------------------------------------')
 
+    # returns a dict of sampled {end_label: [(cycle path as a tuple, weights), ...]}
+    def sample_cycles(self):
+        samples = {label: [] for label in self.inputs}
+        for l, w, n in zip(self.sample_cycle_lengths, self.sample_cycle_weights, self.sample_cycle_num):
+            for label in self.inputs:
+                for _ in range(n):
+                    cycle = [label]
+                    last_label = label
+                    for __ in range(l - 1):
+                        avails = list(o for o in self.inputs if o != label and o != last_label)
+                        last_label = np.random.choice(avails)
+                        cycle.append(last_label)
+                    samples[label].append((tuple(cycle) + (label,), w / n))
+        return samples
+
     def set_input(self, input):
         for label in self.inputs:
             values = input[label]
             self.inputs[label].resize_(values.size()).copy_(values)
         self.image_paths = input['A_paths'] # hacks
+
+    # return the rec images
+    def forward_path(self, images, path, current_idx = 0):
+        current = path[current_idx]
+        target_idx = current_idx + 1
+        while target_idx < len(path):
+            target = path[target_idx]
+            images = self.Gs[(current, target)].forward(images)
+            current = target
+            target_idx += 1
+        return images
 
     def forward(self, volatile = False):
         self.reals = {}
@@ -115,27 +169,14 @@ class MultiCycleGANWithHubModel(BaseModel):
         for label in self.inputs:
             real = Variable(self.inputs[label], volatile = volatile)
             self.reals[label] = real
-            if label == self.hub:
-                for to_label in self.inputs:
-                    if to_label == self.hub:
-                        continue
-                    fake = self.decorders[to_label].forward(real)
-                    rec = self.encoders[to_label].forward(fake)
-                    self.fakes[(label, to_label)] = fake
-                    self.recs[(label, to_label)] = rec
-            else:
-                fake_hub = self.encoders[label].forward(real)
-                for to_label in self.inputs:
-                    if to_label == label:
-                        continue
-                    elif to_label == self.hub:
-                        fake = fake_hub
-                        rec = self.decorders[label].forward(fake_hub)
-                    else:
-                        fake = self.decorders[to_label].forward(fake_hub)
-                        rec = self.decorders[label].forward(self.encoders[to_label].forward(fake))
-                    self.fakes[(label, to_label)] = fake
-                    self.recs[(label, to_label)] = rec
+            for to_label in self.inputs:
+                if label == to_label:
+                    continue
+                self.fakes[(label, to_label)] = self.Gs[(label, to_label)].forward(real)
+        for label in self.inputs:
+            for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
+                rec = self.forward_path(self.fakes[(cycle[:2])], cycle, 1)
+                self.recs[cycle] = rec
 
     def test(self):
         self.forward(True)
@@ -147,7 +188,7 @@ class MultiCycleGANWithHubModel(BaseModel):
     def backward_D(self, label):
         real = self.reals[label]
         new_fake = torch.cat(tuple(self.fakes[(from_label, label)] for from_label in self.inputs if from_label != label), 0)
-        fake = self.fake_pools[label].query(new_fake)#, real.size()[0])
+        fake = self.fake_pools[label].query(new_fake)
         netD = self.Ds[label]
         # Real
         pred_real = netD.forward(real)
@@ -174,14 +215,10 @@ class MultiCycleGANWithHubModel(BaseModel):
             if to_label == label:
                 continue
             pred_fake = self.Ds[to_label].forward(self.fakes[(label, to_label)])
-            loss_G_one = self.criterionGAN(pred_fake, True)
-            loss_cycle_one = self.criterionCycle(self.recs[(label, to_label)], real)
-            if label == self.hub or to_label == self.hub:
-                loss_G += loss_G_one
-                loss_cycle += loss_cycle_one
-            else:
-                loss_G += loss_G_one * self.non_hub_multiplier
-                loss_cycle += loss_cycle_one * self.non_hub_multiplier
+            loss_G += self.criterionGAN(pred_fake, True)
+
+        for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
+            loss_cycle += self.criterionCycle(self.recs[cycle], real) * weight
 
         loss_G /= self.num_datasets - 1
         loss_cycle *= self.lambdas[label]
@@ -196,6 +233,8 @@ class MultiCycleGANWithHubModel(BaseModel):
         self.loss_Ds = {}
         self.loss_cycles = {}
         self.loss_Gs = {}
+        # sample cycles
+        self.sampled_cycles = self.sample_cycles()
         # forward
         self.forward()
         # Gs
@@ -244,21 +283,20 @@ class MultiCycleGANWithHubModel(BaseModel):
                     continue
                 # fake images
                 visuals['fake_' + label + to_label] = util.tensor2im(self.fakes[(label, to_label)].data)
-                # rec images
-                visuals['rec_' + label + to_label] = util.tensor2im(self.recs[(label, to_label)].data)
                 # identity rec images
                 if self.opt.identity > 0.0:
                     raise NotImplemented
                     for label in self.inputs:
                         visuals['idt_' + label + to_label] = util.tensor2im(self.idt_recs[(label, to_label)].data)
-
+            # rec images
+            for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
+                visuals['rec_' + ''.join(cycle)] = util.tensor2im(self.recs[cycle].data)
         return visuals
 
     def save(self, which_epoch):
+        for label, to_label in self.Gs:
+            self.save_network(self.Gs[(label, to_label)], 'G_' + label + to_label, which_epoch, self.gpu_ids)
         for label in self.inputs:
-            if label != self.hub:
-                self.save_network(self.encoders[label], 'enc_' + label, which_epoch, self.gpu_ids)
-                self.save_network(self.decorders[label], 'dec_' + label, which_epoch, self.gpu_ids)
             self.save_network(self.Ds[label], 'D_' + label, which_epoch, self.gpu_ids)
 
     def set_learning_rate(self, lr):

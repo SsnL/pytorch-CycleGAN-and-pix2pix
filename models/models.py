@@ -12,7 +12,8 @@ def create_model(opt):
             #assert(opt.align_data == False)
             model = MultiCycleGANWithHubModel()
         else:
-            raise NotImplemented
+            from .multi_cycle_gan_model import MultiCycleGANModel
+            model = MultiCycleGANModel()
     elif opt.model == 'pix2pix':
         assert(opt.dataset_mode == 'aligned')
         from .pix2pix_model import Pix2PixModel

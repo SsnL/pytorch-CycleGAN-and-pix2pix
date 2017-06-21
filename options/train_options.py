@@ -20,8 +20,11 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--no_lsgan', action='store_true', help='do *not* use least square GAN, if false, use vanilla GAN')
         self.parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
         self.parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
-        self.parser.add_argument('--lambdas', nargs='+', type=float, default=[2.5,2.5], help='cycle loss weights from reconstruction')
-        self.parser.add_argument('--non_hub_multiplier', type=float, default=0.5, help='multiplyier for cycle loss from reconstruction from non-hub vertices')
+        self.parser.add_argument('--lambdas', nargs='+', type=float, default=[10,10], help='[multi] cycle loss weights from reconstruction for each dataset')
+        self.parser.add_argument('--non_hub_multiplier', type=float, default=0.5, help='[multi, hub] multiplier for cycle loss from reconstruction from non-hub vertices')
+        self.parser.add_argument('--cycle_lengths', nargs='+', type=int, default=[2,3,5,7], help='[multi, pair] cycle loss lengths, suggested to be primes')
+        self.parser.add_argument('--cycle_weights', nargs='+', type=float, default=[0.4,0.2,0.05,0.02], help='[multi, pair] cycle loss weights for each cycle length')
+        self.parser.add_argument('--cycle_num_samples', nargs='+', type=int, default=[-1,4,3,3], help='[multi, pair] #cycles sampled per dataset to estimate cycle loss weights for each cycle length, <=0 values means exact calculation')
         self.parser.add_argument('--pool_size', type=int, default=50, help='the size of image buffer that stores previously generated images')
         self.parser.add_argument('--no_html', action='store_true', help='do not save intermediate training results to [opt.checkpoints_dir]/[opt.name]/web/')
         self.isTrain = True
