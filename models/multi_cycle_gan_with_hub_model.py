@@ -109,9 +109,9 @@ class MultiCycleGANWithHubModel(BaseModel):
         self.image_paths = input['A_paths'] # hacks
 
     def forward(self, volatile = False):
-        self.reals = {}
-        self.fakes = {}
-        self.recs = {}
+        self.reals = OrderedDict()
+        self.fakes = OrderedDict()
+        self.recs = OrderedDict()
         for label in self.inputs:
             real = Variable(self.inputs[label], volatile = volatile)
             self.reals[label] = real
@@ -147,7 +147,7 @@ class MultiCycleGANWithHubModel(BaseModel):
     def backward_D(self, label):
         real = self.reals[label]
         new_fake = torch.cat(tuple(self.fakes[(from_label, label)] for from_label in self.inputs if from_label != label), 0)
-        fake = self.fake_pools[label].query(new_fake)#, real.size()[0])
+        fake = self.fake_pools[label].query(new_fake)
         netD = self.Ds[label]
         # Real
         pred_real = netD.forward(real)
