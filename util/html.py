@@ -4,10 +4,11 @@ import os
 
 
 class HTML:
-    def __init__(self, web_dir, title, reflesh=0):
+    def __init__(self, web_dir, title, reflesh=0, html_name='index'):
         self.title = title
         self.web_dir = web_dir
         self.img_dir = os.path.join(self.web_dir, 'images')
+        self.html_name = html_name
         if not os.path.exists(self.web_dir):
             os.makedirs(self.web_dir)
         if not os.path.exists(self.img_dir):
@@ -43,7 +44,7 @@ class HTML:
                             p(txt)
 
     def save(self):
-        html_file = '%s/index.html' % self.web_dir
+        html_file = '%s/%s.html' % (self.web_dir, self.html_name)
         f = open(html_file, 'wt')
         f.write(self.doc.render())
         f.close()

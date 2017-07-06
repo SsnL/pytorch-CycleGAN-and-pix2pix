@@ -1,6 +1,8 @@
 import time
 import os
 from options.test_options import TestOptions
+from operator import itemgetter
+import itertools
 from data.data_loader import CreateDataLoader
 from models.models import create_model
 from util.visualizer import Visualizer
@@ -22,13 +24,13 @@ web_dir = os.path.join(opt.results_dir, opt.name, '%s_%s' % (opt.phase, opt.whic
 webpage = html.HTML(web_dir, 'Experiment = %s, Phase = %s, Epoch = %s' % (opt.name, opt.phase, opt.which_epoch))
 # test
 for i, data in enumerate(dataset):
-    if i >= opt.how_many:
+    if opt.how_many >= 0 and i >= opt.how_many:
         break
     model.set_input(data)
     model.test()
     visuals = model.get_current_visuals()
-    img_path = model.get_image_paths()
-    print('process image... %s' % img_path)
-    visualizer.save_images(webpage, visuals, img_path)
+    img_paths = model.get_image_paths()
+    print('process image... %s' % ', '.join(map(itemgetter(0), itertools.groupby(img_paths))))
+    visualizer.save_images(webpage, visuals, img_paths)
 
 webpage.save()

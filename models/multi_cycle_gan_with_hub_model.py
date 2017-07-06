@@ -106,7 +106,7 @@ class MultiCycleGANWithHubModel(BaseModel):
         for label in self.inputs:
             values = input[label]
             self.inputs[label].resize_(values.size()).copy_(values)
-        self.image_paths = input['A_paths'] # hacks
+        self.image_paths = {l: input['{}_paths'.format(l)] for l in self.inputs}
 
     def forward(self, volatile = False):
         self.reals = OrderedDict()
@@ -141,8 +141,13 @@ class MultiCycleGANWithHubModel(BaseModel):
         self.forward(True)
 
     #get image paths
-    def get_image_paths(self):
-        return self.image_paths
+    def get_image_paths_at(self, i):
+        image_paths = []
+        replicate = 1 + (3 if self.opt.identity > 0 else 2) * (self.num_datasets - 1)
+        for label in self.inputs:
+            if i < self.inputs[label].size(0):
+                image_paths += [self.image_paths[label][i]] * replicate
+        return image_paths
 
     def backward_D(self, label):
         real = self.reals[label]

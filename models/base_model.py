@@ -1,5 +1,6 @@
 import os
 import torch
+from collections import OrderedDict
 
 
 class BaseModel():
@@ -8,6 +9,7 @@ class BaseModel():
 
     def initialize(self, opt):
         self.opt = opt
+        self.display_num = opt.display_num
         self.gpu_ids = opt.gpu_ids
         self.isTrain = opt.isTrain
         self.Tensor = torch.cuda.FloatTensor if self.gpu_ids else torch.Tensor
@@ -28,14 +30,35 @@ class BaseModel():
     def test(self):
         pass
 
-    def get_image_paths(self):
+    def get_image_paths_at(self, i):
         pass
+
+    def get_image_paths(self):
+        image_paths = []
+        for i in range(self.display_num):
+            image_paths += self.get_image_paths_at(i)
+        return image_paths
 
     def optimize_parameters(self):
         pass
 
+    def get_current_visuals_at(self, i):
+        if i < self.input.size(0):
+            return self.input[i]
+        else:
+            return {}
+
     def get_current_visuals(self):
-        return self.input
+        if self.display_num <= 0:
+            return {}
+        elif self.display_num == 1:
+            return self.get_current_visuals_at(0)
+        else:
+            visuals = OrderedDict()
+            for i in range(self.display_num):
+                for k, v in self.get_current_visuals_at(i).items():
+                    visuals['{}_{}'.format(k, i)] = v
+            return visuals
 
     def get_current_errors(self):
         return {}

@@ -6,14 +6,21 @@ def create_model(opt):
         assert(opt.dataset_mode == 'unaligned')
         from .cycle_gan_model import CycleGANModel
         model = CycleGANModel()
+    elif opt.model == 'dual_gan':
+        from .dual_gan_model import DualGANModel
+        #assert(opt.align_data == False)
+        model = DualGANModel()
+    elif opt.model == 'latent_cycle_gan':
+        from .latent_cycle_gan_model import LatentCycleGANModel
+        #assert(opt.align_data == False)
+        model = LatentCycleGANModel()
+    elif opt.model == 'multi_cycle_gan_hub':
+        from .multi_cycle_gan_with_hub_model import MultiCycleGANWithHubModel
+        #assert(opt.align_data == False)
+        model = MultiCycleGANWithHubModel()
     elif opt.model == 'multi_cycle_gan':
-        if opt.hub != 'none':
-            from .multi_cycle_gan_with_hub_model import MultiCycleGANWithHubModel
-            #assert(opt.align_data == False)
-            model = MultiCycleGANWithHubModel()
-        else:
-            from .multi_cycle_gan_model import MultiCycleGANModel
-            model = MultiCycleGANModel()
+        from .multi_cycle_gan_model import MultiCycleGANModel
+        model = MultiCycleGANModel()
     elif opt.model == 'pix2pix':
         assert(opt.dataset_mode == 'aligned')
         from .pix2pix_model import Pix2PixModel

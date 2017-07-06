@@ -34,12 +34,16 @@ class MultiCycleGANModel(BaseModel):
 
         assert len(opt.ncs) == num_datasets
 
-        self.lambdas = {}
-        self.inputs = {}
+        self.inputs = OrderedDict()
 
-        for label, lamda, nc in zip(string.ascii_uppercase, opt.lambdas, opt.ncs):
-            self.lambdas[label] = lamda
+        for label, nc in zip(string.ascii_uppercase, opt.ncs):
             self.inputs[label] = self.Tensor(nb, nc, size, size)
+
+        if self.isTrain:
+            self.lambdas = OrderedDict()
+
+            for label, lamda in zip(string.ascii_uppercase, opt.lambdas):
+                self.lambdas[label] = lamda
 
         # preprocess with cycles
         assert len(opt.cycle_lengths) == len(opt.cycle_weights) == len(opt.cycle_num_samples)
@@ -150,15 +154,25 @@ class MultiCycleGANModel(BaseModel):
                         last_label = np.random.choice(avails)
                         cycle.append(last_label)
                     samples[label][tuple(cycle) + (label,)] += w / n
-        return samples
+        return {label: list(samples[label].items()) for label in samples}
 
     def set_input(self, input):
         for label in self.inputs:
             values = input[label]
             self.inputs[label].resize_(values.size()).copy_(values)
-        self.image_paths = input['A_paths'] # hacks
+        self.image_paths = {l: input['{}_paths'.format(l)] for l in self.inputs}
         # sample cycles
         self.sampled_cycles = self.sample_cycles()
+
+    #get image paths
+    def get_image_paths_at(self, i):
+        image_paths = []
+        no_rec_replicate = 1 + (2 if self.opt.identity > 0 else 1) * (self.num_datasets - 1)
+        for label in self.inputs:
+            if i < self.inputs[label].size(0):
+                num_cycles = len(self.exact_cycles[label] + self.sampled_cycles[label])
+                image_paths += [self.image_paths[label][i]] * (no_rec_replicate + num_cycles)
+        return image_paths
 
     # return the rec images
     def forward_path(self, images, path, current_idx = 0):
@@ -183,16 +197,12 @@ class MultiCycleGANModel(BaseModel):
                     continue
                 self.fakes[(label, to_label)] = self.Gs[(label, to_label)].forward(real)
         for label in self.inputs:
-            for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
+            for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):
                 rec = self.forward_path(self.fakes[(cycle[:2])], cycle, 1)
                 self.recs[cycle] = rec
 
     def test(self):
         self.forward(True)
-
-    #get image paths
-    def get_image_paths(self):
-        return self.image_paths
 
     def backward_D(self, label):
         real = self.reals[label]
@@ -226,7 +236,7 @@ class MultiCycleGANModel(BaseModel):
             pred_fake = self.Ds[to_label].forward(self.fakes[(label, to_label)])
             loss_G += self.criterionGAN(pred_fake, True)
 
-        for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
+        for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):
             loss_cycle += self.criterionCycle(self.recs[cycle], real) * weight
 
         loss_G /= self.num_datasets - 1
@@ -304,7 +314,8 @@ class MultiCycleGANModel(BaseModel):
                 visuals['rec_' + ''.join(cycle)] = util.tensor2im(self.recs[cycle].data)
                 nimgs += 1
             # if necessary, add fillers till new row
-            while ncols > 0 and nimgs % ncols != 0:
+            # when testing, outputing to webpage, so skip
+            while self.isTrain and ncols > 0 and nimgs % ncols != 0:
                 visuals['filler_' + label + '_' + str(nimgs)] = self.visual_filler
                 nimgs += 1
         return visuals

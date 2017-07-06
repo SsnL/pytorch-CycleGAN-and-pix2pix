@@ -11,6 +11,7 @@ class BaseOptions():
     def initialize(self):
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
         self.parser.add_argument('--batchSize', type=int, default=1, help='input batch size')
+        self.parser.add_argument('--display_num', type=int, default=1, help='number of training inputs in each display. set equal to batchSize to display full batch')
         self.parser.add_argument('--loadSize', type=int, default=286, help='scale images to this size')
         self.parser.add_argument('--fineSize', type=int, default=256, help='then crop to this size')
         self.parser.add_argument('--interpolation', type=str, default='bicubic', help='interpoltion scheme to scale images. bicubic, bilinear.')
@@ -21,16 +22,26 @@ class BaseOptions():
         self.parser.add_argument('--which_model_netD', type=str, default='basic', help='selects model to use for netD')
         self.parser.add_argument('--which_model_netG', type=str, default='resnet_9blocks', help='selects model to use for netG')
         self.parser.add_argument('--n_layers_D', type=int, default=3, help='only used if which_model_netD==n_layers')
+        self.parser.add_argument('--no_lsgan', action='store_true', help='do *not* use least square GAN, if false, use vanilla GAN')
+        self.parser.add_argument('--lambda_A', type=float, default=10.0, help='weight for cycle loss (A -> B -> A)')
+        self.parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
         self.parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
         self.parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
         self.parser.add_argument('--dataset_mode', type=str, default='unaligned', help='chooses how datasets are loaded. [unaligned | aligned | single]')
         self.parser.add_argument('--model', type=str, default='cycle_gan',
-                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, multi_cycle_gan, test, ...')
+                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, , multi_cycle_gan, dual_gan, latent_cycle_gan, test, ...')
+        self.parser.add_argument('--latent_nc', type=int, default=1,
+                                 help='[latent_cycle_gan] number of channels in latent space')
+        self.parser.add_argument('--latent_z', type=int, default=8,
+                                 help='[latent_cycle_gan] z dimension')
         self.parser.add_argument('--num_datasets', type=int, default=2,
-                                 help='number of datasets, relavent to multi_cycle_gan')
+                                 help='[multi_cycle_gan, multi_cycle_gan_hub] number of datasets')
         self.parser.add_argument('--hub', type=str, default='A',
-                                 help='which hub to use in multi_cycle_gan, "none" means no hub, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
-        self.parser.add_argument('--ncs', nargs='+', type=int, default=[3,3], help='# of output image channels for each dataset')
+                                 help='[multi_cycle_gan_hub] which hub to use, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
+        self.parser.add_argument('--ncs', nargs='+', type=int, default=[3,3], help='[multi_cycle_gan, multi_cycle_gan_hub] # of output image channels for each dataset')
+        self.parser.add_argument('--cycle_lengths', nargs='+', type=int, default=[2,3], help='[multi_cycle_gan] cycle loss lengths, suggested to be primes')
+        self.parser.add_argument('--cycle_weights', nargs='+', type=float, default=[0.5,0.25], help='[multi_cycle_gan] cycle loss weights for each cycle length')
+        self.parser.add_argument('--cycle_num_samples', nargs='+', type=int, default=[-1,4], help='[multi_cycle_gan] #cycles sampled per dataset to estimate cycle loss weights for each cycle length, <=0 values means exact calculation')
         self.parser.add_argument('--which_direction', type=str, default='AtoB', help='AtoB or BtoA')
         self.parser.add_argument('--nThreads', default=2, type=int, help='# threads for loading data')
         self.parser.add_argument('--checkpoints_dir', type=str, default='./checkpoints', help='models are saved here')
@@ -45,6 +56,9 @@ class BaseOptions():
         self.parser.add_argument('--max_dataset_size', type=int, default=float("inf"), help='Maximum number of samples allowed per dataset. If the dataset directory contains more than max_dataset_size, only a subset is loaded.')
         self.parser.add_argument('--resize_or_crop', type=str, default='resize_and_crop', help='scaling and cropping of images at load time [resize_and_crop|crop|scale_width|scale_width_and_crop]')
         self.parser.add_argument('--no_flip', action='store_true', help='if specified, do not flip the images for data argumentation')
+        self.parser.add_argument('--weight_transform', type=str, default=None, help='if not empty, expression of variable "l", the loss for a particular data, that represents the transformed loss that weight is proportional to, e.g., "np.exp(-l)"')
+        self.parser.add_argument('--weight_mean_estimator', type=str, default='last_k', help='method to estimate mean of transformed loss, e.g. last_k, decay')
+        self.parser.add_argument('--weight_mean_estimator_arg', type=float, default=10, help='argument to the mean estimator')
 
         self.initialized = True
 

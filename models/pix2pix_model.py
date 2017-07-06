@@ -36,6 +36,7 @@ class Pix2PixModel(BaseModel):
                 self.load_network(self.netD, 'D', opt.which_epoch)
 
         if self.isTrain:
+            self.display_num = opt.display_num
             self.fake_AB_pool = ImagePool(opt.pool_size)
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
@@ -72,9 +73,9 @@ class Pix2PixModel(BaseModel):
         self.fake_B = self.netG.forward(self.real_A)
         self.real_B = Variable(self.input_B, volatile=True)
 
-    # get image paths
-    def get_image_paths(self):
-        return self.image_paths
+    #get image paths
+    def get_image_paths_at(self, i):
+        return [self.image_paths[i]] * 3
 
     def backward_D(self):
         # Fake
@@ -124,11 +125,13 @@ class Pix2PixModel(BaseModel):
                             ('D_fake', self.loss_D_fake.data[0])
                             ])
 
-    def get_current_visuals(self):
-        real_A = util.tensor2im(self.real_A.data)
-        fake_B = util.tensor2im(self.fake_B.data)
-        real_B = util.tensor2im(self.real_B.data)
-        return OrderedDict([('real_A', real_A), ('fake_B', fake_B), ('real_B', real_B)])
+    def get_current_visuals_at(self, i):
+        visuals = OrderedDict()
+        if i < self.real_A.size()[0]:
+            visuals['real_A'] = util.tensor2im(self.real_A.data, i)
+            visuals['fake_B'] = util.tensor2im(self.fake_B.data, i)
+            visuals['real_B'] = util.tensor2im(self.real_B.data, i)
+        return visuals
 
     def save(self, label):
         self.save_network(self.netG, 'G', label, self.gpu_ids)
