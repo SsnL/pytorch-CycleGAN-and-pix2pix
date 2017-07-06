@@ -24,12 +24,14 @@ class Pix2PixModel(BaseModel):
 
         # load/define networks
         self.netG = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf,
-                                      opt.which_model_netG, opt.norm, not opt.no_dropout, self.gpu_ids)
+                                      opt.which_model_netG, opt.norm,
+                                      not opt.no_dropout, gpu_ids = self.gpu_ids)
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
             self.netD = networks.define_D(opt.input_nc + opt.output_nc, opt.ndf,
-                                          opt.which_model_netD,
-                                          opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                          opt.which_model_netD, opt.n_layers_D,
+                                          opt.norm, use_sigmoid,
+                                          gpu_ids = self.gpu_ids)
         if not self.isTrain or opt.continue_train:
             self.load_network(self.netG, 'G', opt.which_epoch)
             if self.isTrain:

@@ -30,7 +30,7 @@ class MultiCycleGANModel(BaseModel):
         # image pane, we need filler image so that results from certain dataset
         # are placed in beginning of new rows.
         if self.display_single_pane_ncols > 0:
-            self.visual_filler = np.ones((3, size, size), dtype = np.uint8) * 255
+            self.visual_filler = np.ones((size, size, 3), dtype = np.uint8) * 255
 
         assert len(opt.ncs) == num_datasets
 
@@ -96,7 +96,7 @@ class MultiCycleGANModel(BaseModel):
 
         for (label, nc), (to_label, to_nc) in itertools.permutations(zip(self.inputs, opt.ncs), 2):
             self.Gs[(label, to_label)] = networks.define_G(nc, to_nc,
-                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
+                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, gpu_ids = self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan

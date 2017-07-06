@@ -8,8 +8,12 @@ def CreateDataset(opt):
         from data.aligned_dataset import AlignedDataset
         dataset = AlignedDataset()
     elif opt.dataset_mode == 'unaligned':
-        from data.unaligned_dataset import UnalignedDataset
-        dataset = UnalignedDataset()
+        if opt.num_datasets > 2:
+            from data.unaligned_multi_dataset import UnalignedMultiDataset
+            dataset = UnalignedMultiDataset()
+        else:
+            from data.unaligned_dataset import UnalignedDataset
+            dataset = UnalignedDataset()
     elif opt.dataset_mode == 'single':
         from data.single_dataset import SingleDataset
         dataset = SingleDataset()

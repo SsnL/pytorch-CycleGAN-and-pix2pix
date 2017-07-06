@@ -26,17 +26,19 @@ class DualGANModel(BaseModel):
         # The naming conversion is different from those used in the paper
         # Code (paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
 
-        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc,
-                                        opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
-        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc,
-                                        opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
+        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf,
+                                        opt.which_model_netG, opt.norm,
+                                        opt.use_dropout, gpu_ids = self.gpu_ids)
+        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf,
+                                        opt.which_model_netG, opt.norm,
+                                        opt.use_dropout, gpu_ids = self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
             # real === real_A_fake_B
             self.netD = networks.define_D(opt.output_nc + opt.input_nc, opt.ndf,
-                                          opt.which_model_netD,
-                                          opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                          opt.which_model_netD, opt.n_layers_D,
+                                          opt.norm, use_sigmoid, self.gpu_ids)
         if not self.isTrain or opt.continue_train:
             which_epoch = opt.which_epoch
             self.load_network(self.netG_A, 'G_A', which_epoch)

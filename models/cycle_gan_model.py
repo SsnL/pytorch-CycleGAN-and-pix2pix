@@ -28,10 +28,12 @@ class CycleGANModel(BaseModel):
         # The naming conversion is different from those used in the paper
         # Code (paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
 
-        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc,
-                                        opt.ngf, opt.which_model_netG, opt.norm, not opt.no_dropout, self.gpu_ids)
-        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc,
-                                        opt.ngf, opt.which_model_netG, opt.norm, not opt.no_dropout, self.gpu_ids)
+        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf,
+                                        opt.which_model_netG, opt.norm,
+                                        not opt.no_dropout, gpu_ids = self.gpu_ids)
+        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf,
+                                        opt.which_model_netG, opt.norm,
+                                        not opt.no_dropout, gpu_ids = self.gpu_ids)
 
         self.estimate_weight = bool(opt.weight_transform)
 
@@ -39,10 +41,12 @@ class CycleGANModel(BaseModel):
             use_sigmoid = opt.no_lsgan
             self.netD_A = networks.define_D(opt.output_nc, opt.ndf,
                                             opt.which_model_netD,
-                                            opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                            opt.n_layers_D, opt.norm,
+                                            use_sigmoid, self.gpu_ids)
             self.netD_B = networks.define_D(opt.input_nc, opt.ndf,
                                             opt.which_model_netD,
-                                            opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                            opt.n_layers_D, opt.norm,
+                                            use_sigmoid, self.gpu_ids)
             self.mean_estimator_A = mean_estimator.create_estimator(opt)
             self.mean_estimator_B = mean_estimator.create_estimator(opt)
             # define loss functions
@@ -251,7 +255,7 @@ class CycleGANModel(BaseModel):
             visuals['fake_A'] = util.tensor2im(self.fake_A.data, i)
             visuals['rec_B'] = util.tensor2im(self.rec_B.data, i)
             if self.opt.identity > 0.0:
-                visuals['idt_B'.format(i)] = util.tensor2im(self.idt_B.data, i)
+                visuals['idt_B'] = util.tensor2im(self.idt_B.data, i)
         return visuals
 
     def save(self, label):

@@ -31,13 +31,15 @@ class LatentCycleGANModel(BaseModel):
         self.netG_A_to_latent, self.netG_A_from_latent = networks.define_G(
                                         opt.input_nc, opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, self.gpu_ids, size,
-                                        opt.latent_nc, opt.latent_z)
+                                        opt.use_dropout, size,
+                                        (opt.latent_nc, opt.latent_z),
+                                        self.gpu_ids)
         self.netG_B_to_latent, self.netG_B_from_latent = networks.define_G(
                                         opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, self.gpu_ids, size,
-                                        opt.latent_nc, opt.latent_z)
+                                        opt.use_dropout, size,
+                                        (opt.latent_nc, opt.latent_z),
+                                        self.gpu_ids)
 
         self.estimate_weight = bool(opt.weight_transform)
 
@@ -45,7 +47,8 @@ class LatentCycleGANModel(BaseModel):
             use_sigmoid = opt.no_lsgan
             self.netD_latent = networks.define_D(opt.latent_nc, opt.ndf,
                                          opt.which_model_netD,
-                                         opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                         opt.n_layers_D, opt.norm, use_sigmoid,
+                                         self.gpu_ids)
             self.netD_z = networks.define_D_1d(opt.latent_z,
                                                opt.which_model_netD,
                                                opt.n_layers_D, use_sigmoid,

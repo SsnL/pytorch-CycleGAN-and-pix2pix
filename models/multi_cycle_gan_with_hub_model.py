@@ -53,18 +53,20 @@ class MultiCycleGANWithHubModel(BaseModel):
         for label, nc in zip(self.inputs, opt.ncs):
             if label == hub:
                 continue
-            self.encoders[label] = networks.define_G(nc, hub_nc,
-                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
-            self.decorders[label] = networks.define_G(hub_nc, nc,
-                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, self.gpu_ids)
+            self.encoders[label] = networks.define_G(nc, hub_nc, opt.ngf,
+                                     opt.which_model_netG, opt.norm,
+                                     opt.use_dropout, gpu_ids = self.gpu_ids)
+            self.decorders[label] = networks.define_G(hub_nc, nc, opt.ngf,
+                                     opt.which_model_netG, opt.norm,
+                                     opt.use_dropout, gpu_ids = self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
             self.Ds = {}
             for label, nc in zip(self.inputs, opt.ncs):
                 self.Ds[label] = networks.define_D(nc, opt.ndf,
-                                         opt.which_model_netD,
-                                         opt.n_layers_D, opt.norm, use_sigmoid, self.gpu_ids)
+                                         opt.which_model_netD, opt.n_layers_D,
+                                         opt.norm, use_sigmoid, self.gpu_ids)
 
         if not self.isTrain or opt.continue_train:
             which_epoch = opt.which_epoch

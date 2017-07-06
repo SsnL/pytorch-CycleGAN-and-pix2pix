@@ -1,9 +1,5 @@
 import torch
 import torch.nn as nn
-<<<<<<< HEAD
-from torch.nn import init
-=======
->>>>>>> update models
 import functools
 from torch.autograd import Variable
 import numpy as np
@@ -30,7 +26,7 @@ def get_norm_layer(norm_type='instance'):
         raise NotImplementedError('normalization layer [%s] is not found' % norm)
     return norm_layer
 
-def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropout=False, gpu_ids=[], input_size=None, latent_nc=None, latent_z=None):
+def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropout=False, input_size=None, latent_nc_z=None, gpu_ids=[]):
     netG = None
     use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
@@ -38,11 +34,13 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropo
     if use_gpu:
         assert(torch.cuda.is_available())
 
-    if latent_nc is not None and which_model_netG == 'resnet_5blocks':
+    if latent_nc_z is not None and which_model_netG == 'resnet_5blocks':
+        latent_nc, latent_z = latent_nc_z
         netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=5, latent_z=latent_z, gpu_ids=gpu_ids)
         netG_from_latent = ResnetGenerator(latent_nc+latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=5, gpu_ids=gpu_ids)
         netG = (netG_to_latent, netG_from_latent)
-    elif latent_nc is not None and which_model_netG == 'resnet_3blocks':
+    elif latent_nc_z is not None and which_model_netG == 'resnet_3blocks':
+        latent_nc, latent_z = latent_nc_z
         netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=3, latent_z=latent_z, gpu_ids=gpu_ids)
         netG_from_latent = ResnetGenerator(latent_nc+latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=3, gpu_ids=gpu_ids)
         netG = (netG_to_latent, netG_from_latent)
