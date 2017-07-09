@@ -4,7 +4,12 @@ from data.base_data_loader import BaseDataLoader
 
 def CreateDataset(opt):
     dataset = None
-    if opt.dataset_mode == 'aligned':
+    if opt.gen_data:
+        import importlib
+        module = importlib.import_module('data.%s' % opt.dataroot)
+        import inflection
+        dataset = getattr(module, inflection.camelize(opt.dataroot))()
+    elif opt.dataset_mode == 'aligned':
         from data.aligned_dataset import AlignedDataset
         dataset = AlignedDataset()
     elif opt.dataset_mode == 'unaligned':

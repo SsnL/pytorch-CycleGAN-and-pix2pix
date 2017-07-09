@@ -18,7 +18,7 @@ class LatentCycleGANModel(BaseModel):
         BaseModel.initialize(self, opt)
 
         nb = opt.batchSize
-        self.size = size = opt.fineSize
+        size = opt.fineSize
         self.latent_nc = opt.latent_nc
         self.latent_z = opt.latent_z
 
@@ -157,12 +157,14 @@ class LatentCycleGANModel(BaseModel):
         # Loss
         # A
         self.latent_A, self.z_A = self.netG_A_to_latent.forward(self.real_A)
-        self.rec_A = self.forward_from_latent(self.latent_A, self.z_A, self.netG_B_from_latent)
+        self.stats_A = self.get_mean_std(self.real_A)
+        self.rec_A = self.forward_from_latent(self.latent_A, self.z_A, *self.stats_A, self.netG_B_from_latent)
         self.loss_G_latent_A, self.loss_G_z_A, self.loss_cycle_A = self.get_loss( \
             self.real_A, self.latent_A, self.z_A, self.rec_A, False, True, lambda_A)
         # B
         self.latent_B, self.z_B = self.netG_B_to_latent.forward(self.real_B)
-        self.rec_B = self.forward_from_latent(self.latent_B, self.z_B, self.netG_A_from_latent)
+        self.stats_B = self.get_mean_std(self.real_B)
+        self.rec_B = self.forward_from_latent(self.latent_B, self.z_B, *self.stats_B, self.netG_A_from_latent)
         self.loss_G_latent_B, self.loss_G_z_B, self.loss_cycle_B = self.get_loss( \
             self.real_B, self.latent_B, self.z_B, self.rec_B, True, True, lambda_B)
         # combined loss
@@ -172,9 +174,17 @@ class LatentCycleGANModel(BaseModel):
             self.loss_cycle_A + self.loss_cycle_B
         self.loss_G.backward()
 
-    def forward_from_latent(self, latent, z, netG_from_latent):
-        k = latent.size(0)
-        z_expanded = z[:, :, None, None].expand(k, self.latent_z, self.size, self.size)
+    def get_mean_std(self, input):
+        k, nc, w, h = input.size()
+        input_reshaped = input.view(k, nc, w * h)
+        input_mu = input_reshaped.mean(2).squeeze(2)
+        input_sig = input_reshaped.std(2).squeeze(2)
+        return input_mu, input_sig
+
+    def forward_from_latent(self, latent, z, input_mu, input_sig, netG_from_latent):
+        k, _, w, h = latent.size()
+        z_aug = torch.cat((z, input_mu, input_sig), 1)
+        z_expanded = z_aug[:, :, None, None].expand(k, z_aug.size(1), w, h)
         input_latent_z = torch.cat((latent, z_expanded), 1)
         return netG_from_latent.forward(input_latent_z)
 
@@ -202,7 +212,6 @@ class LatentCycleGANModel(BaseModel):
         self.backward_D_z()
         self.optimizer_D_z.step()
 
-
     def get_current_errors(self):
         D_latent = self.loss_D_latent.data[0]
         D_z = self.loss_D_z.data[0]
@@ -229,30 +238,30 @@ class LatentCycleGANModel(BaseModel):
 
     def get_current_visuals(self):
         self.real_z_A = self.real_z[:self.latent_A.size(0)]
-        self.fake_B = self.forward_from_latent(self.latent_A, real_z_A, \
+        self.fake_B = self.forward_from_latent(self.latent_A, self.real_z_A, *self.stats_A, \
             self.netG_A_from_latent)
         self.real_z_B = self.real_z[self.latent_A.size(0):]
-        self.fake_A = self.forward_from_latent(self.latent_B, real_z_B, \
+        self.fake_A = self.forward_from_latent(self.latent_B, self.real_z_B, *self.stats_B, \
             self.netG_B_from_latent)
-        return super().get_current_visuals(self)
+        return super().get_current_visuals()
 
-    def get_current_visuals_at(self, i)
+    def get_current_visuals_at(self, i):
         visuals = OrderedDict()
         if i < self.real_A.size(0):
             visuals['real_A{}'.format(self.z_str(self.z_A[i]))] = util.tensor2im(self.real_A.data, i)
-            if self.latent_nc == 3:
-                visuals['latent_A'] = util.tensor2im(self.latent_A.data, i)
-            elif self.latent_nc == 1:
-                visuals['latent_A'] = util.tensor2im(self.latent_A.data, i).repeat(3, 2)
-            visuals['fake_B{}'.format(self.z_str(self.real_z_A[i]))] = util.tensor2im(fake_B.data, i)
+            # if self.latent_nc == 3:
+            #     visuals['latent_A'] = util.tensor2im(self.latent_A.data, i)
+            # elif self.latent_nc == 1:
+            #     visuals['latent_A'] = util.tensor2im(self.latent_A.data, i).repeat(3, 2)
+            visuals['fake_B{}'.format(self.z_str(self.real_z_A[i]))] = util.tensor2im(self.fake_B.data, i)
             visuals['rec_A'] = util.tensor2im(self.rec_A.data, i)
         if i < self.real_B.size(0):
-            visuals['real_B{}'.format(self.z_str(self.z_B, [i]))] = util.tensor2im(self.real_B.data, i)
-            if self.latent_nc == 3:
-                visuals['latent_B'] = util.tensor2im(self.latent_B.data, i)
-            elif self.latent_nc == 1:
-                visuals['latent_B'] = util.tensor2im(self.latent_B.data, i).repeat(3, 2)
-            visuals['fake_A{}'.format(self.z_str(real_z_B[i]))] = util.tensor2im(fake_A.data, i)
+            visuals['real_B{}'.format(self.z_str(self.z_B[i]))] = util.tensor2im(self.real_B.data, i)
+            # if self.latent_nc == 3:
+            #     visuals['latent_B'] = util.tensor2im(self.latent_B.data, i)
+            # elif self.latent_nc == 1:
+            #     visuals['latent_B'] = util.tensor2im(self.latent_B.data, i).repeat(3, 2)
+            visuals['fake_A{}'.format(self.z_str(self.real_z_B[i]))] = util.tensor2im(self.fake_A.data, i)
             visuals['rec_B'] = util.tensor2im(self.rec_B.data, i)
         return visuals
 

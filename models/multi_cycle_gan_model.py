@@ -83,7 +83,6 @@ class MultiCycleGANModel(BaseModel):
                 self.exact_cycles[label] += [((label,) + tuple(mid) + (label,), w / total) for mid in itertools.chain(*mids.values())]
                 all_mids[label] = mids
             last_exact_l = l
-        # import pdb; pdb.set_trace()
 
         print('----------- Exact cycles --------------')
         for cycles in self.exact_cycles.values():

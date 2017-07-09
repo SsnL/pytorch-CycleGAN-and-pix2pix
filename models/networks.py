@@ -3,25 +3,32 @@ import torch.nn as nn
 import functools
 from torch.autograd import Variable
 import numpy as np
+import re
+from .weight_norm import weight_norm
+
 ###############################################################################
 # Functions
 ###############################################################################
-
 
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv') != -1:
         m.weight.data.normal_(0.0, 0.02)
-    elif classname.find('BatchNorm2d') != -1:
+    elif classname.find('BatchNorm') != -1:
         m.weight.data.normal_(1.0, 0.02)
         m.bias.data.fill_(0)
 
-
 def get_norm_layer(norm_type='instance'):
     if norm_type == 'batch':
-        norm_layer = functools.partial(nn.BatchNorm2d, affine=True)
+        norm_layer = lambda prev, ngf: [prev, nn.BatchNorm2d(ngf, affine=True)]
     elif norm_type == 'instance':
-        norm_layer = functools.partial(nn.InstanceNorm2d, affine=False)
+        norm_layer = lambda prev, ngf: [prev, nn.InstanceNorm2d(ngf, affine=False)]
+    elif norm_type == 'instance_affine':
+        norm_layer = lambda prev, ngf: [prev, nn.InstanceNorm2d(ngf, affine=True)]
+    elif norm_type == 'weight':
+        norm_layer = lambda prev, ngf: [weight_norm(prev, dim = int('ConvTranspose' in prev.__class__.__name__))]
+    elif norm_type == 'identity':
+        norm_layer = lambda prev, ngf: [prev]
     else:
         raise NotImplementedError('normalization layer [%s] is not found' % norm)
     return norm_layer
@@ -34,20 +41,18 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropo
     if use_gpu:
         assert(torch.cuda.is_available())
 
-    if latent_nc_z is not None and which_model_netG == 'resnet_5blocks':
+    resnet_re_m = re.fullmatch('resnet_(\d)blocks', which_model_netG)
+    if resnet_re_m:
+        resnet_nblock = int(resnet_re_m.groups()[0])
+
+    if latent_nc_z is not None:
+        assert(resnet_re_m is not None)
         latent_nc, latent_z = latent_nc_z
-        netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=5, latent_z=latent_z, gpu_ids=gpu_ids)
-        netG_from_latent = ResnetGenerator(latent_nc+latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=5, gpu_ids=gpu_ids)
+        netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, latent_z=latent_z, gpu_ids=gpu_ids)
+        netG_from_latent = ResnetGenerator(latent_nc + latent_z + input_nc * 2, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, gpu_ids=gpu_ids, downsampled=True)
         netG = (netG_to_latent, netG_from_latent)
-    elif latent_nc_z is not None and which_model_netG == 'resnet_3blocks':
-        latent_nc, latent_z = latent_nc_z
-        netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=3, latent_z=latent_z, gpu_ids=gpu_ids)
-        netG_from_latent = ResnetGenerator(latent_nc+latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=3, gpu_ids=gpu_ids)
-        netG = (netG_to_latent, netG_from_latent)
-    elif which_model_netG == 'resnet_9blocks':
-        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9, gpu_ids=gpu_ids)
-    elif which_model_netG == 'resnet_6blocks':
-        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=6, gpu_ids=gpu_ids)
+    elif resnet_re_m:
+        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_128':
         netG = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_256':
@@ -66,7 +71,6 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch', use_dropo
             netG.cuda(device_id=gpu_ids[0])
         netG.apply(weights_init)
     return netG
-
 
 def define_D(input_nc, ndf, which_model_netD,
              n_layers_D=3, norm='batch', use_sigmoid=False, gpu_ids=[]):
@@ -88,8 +92,7 @@ def define_D(input_nc, ndf, which_model_netD,
     netD.apply(weights_init)
     return netD
 
-def define_D_1d(input_size, which_model_netD, n_layers_D=3, use_sigmoid=False,
-                gpu_ids=[]):
+def define_D_1d(input_size, which_model_netD, n_layers_D=3, use_sigmoid=False, gpu_ids=[]):
     netD = None
     use_gpu = len(gpu_ids) > 0
 
@@ -98,7 +101,7 @@ def define_D_1d(input_size, which_model_netD, n_layers_D=3, use_sigmoid=False,
     if which_model_netD == 'basic':
         netD = NLayerDiscriminator1d(input_size, n_layers=3, use_sigmoid=use_sigmoid, gpu_ids=gpu_ids)
     elif which_model_netD == 'n_layers':
-        netD = NLayerDiscriminator1d(input_size, n_layers=n_layers_D, use_sigmoid=use_sigmoid, gpu_ids=gpu_ids)
+        netD = NLayerDiscriminator1d(input_size, n_layers_D, use_sigmoid=use_sigmoid, gpu_ids=gpu_ids)
     else:
         print('Discriminator model name [%s] is not recognized' %
               which_model_netD)
@@ -157,73 +160,111 @@ class GANLoss(nn.Module):
         target_tensor = self.get_target_tensor(input, target_is_real)
         return self.loss(input, target_tensor)
 
+
 class LatentResnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, input_shape, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=3, latent_z=8, gpu_ids=[]):
+    def __init__(self, input_nc, latent_nc, input_shape, ngf=64,
+                 padding_type='reflect', norm_layer=nn.BatchNorm2d,
+                 use_dropout=False, n_blocks=3, latent_z=8, gpu_ids=[]):
         assert(n_blocks >= 0)
         assert(latent_z >= 0)
         super().__init__()
         self.input_nc = input_nc
-        self.output_nc = output_nc
+        self.latent_nc = latent_nc
         self.ngf = ngf
         self.gpu_ids = gpu_ids
 
-        pre_model = [nn.Conv2d(input_nc, ngf, kernel_size=7, padding=3),
-                     norm_layer(ngf, affine=True),
+        n_downsampling = 2
+        self.pre_model = self.__class__._def_pre_model(input_nc, ngf, padding_type, norm_layer, n_blocks, use_dropout, n_downsampling)
+        pre_output_shape = self._get_output_shape(self.pre_model, input_shape)
+
+        self.latent_model = self.__class__._def_latent_model(ngf, latent_nc, norm_layer, n_downsampling)
+        self.latent_dim = pre_output_shape[-1]
+
+        self.conv_z_model = self.__class__._def_conv_z_model(ngf, pre_output_shape, latent_z, norm_layer)
+        conv_z_output_shape = self._get_output_shape(self.conv_z_model, pre_output_shape)
+
+        self.linear_z_input_size = int(np.prod(conv_z_output_shape))
+        self.linear_z_model = self.__class__._def_linear_z_model(self.linear_z_input_size, latent_z)
+
+    def _def_pre_model(input_nc, ngf, padding_type, norm_layer, n_blocks, use_dropout, n_downsampling):
+        pre_model = [nn.ReflectionPad2d(3),
+                     *norm_layer(
+                        nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0),
+                        ngf,
+                     ),
                      nn.ReLU(True)]
 
-        n_downsampling = 2
         for i in range(n_downsampling):
             mult = 2**i
-            pre_model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
+            pre_model += [*norm_layer(
+                            nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
                                 stride=2, padding=1),
-                          norm_layer(ngf * mult * 2, affine=True),
+                            ngf * mult * 2,
+                          ),
                           nn.ReLU(True)]
 
         mult = 2**n_downsampling
         for i in range(n_blocks):
-            pre_model += [ResnetBlock(ngf * mult, 'zero', norm_layer=norm_layer, use_dropout=use_dropout)]
+            pre_model += [ResnetBlock(ngf * mult, padding_type=padding_type,
+                                      norm_layer=norm_layer,
+                                      use_dropout=use_dropout)]
 
-        self.pre_model = nn.Sequential(*pre_model)
+        return nn.Sequential(*pre_model)
 
+    def _def_latent_model(ngf, latent_nc, norm_layer, n_downsampling):
         latent_model = []
-        conv_z_model = []
-        linear_z_model = []
 
-        # upsample latent path
-        for i in range(n_downsampling):
-            mult_latent = 2**(n_downsampling - i)
-            latent_model += [nn.ConvTranspose2d(ngf * mult_latent, int(ngf * mult_latent / 2),
-                                       kernel_size=3, stride=2,
-                                       padding=1, output_padding=1),
-                              norm_layer(int(ngf * mult_latent / 2), affine=True),
-                              nn.ReLU(True)]
-
-        latent_model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=3)]
-        latent_model += [nn.Tanh()]
-        self.latent_model = nn.Sequential(*latent_model)
-
-        # downsample z path more to size ~2
-        pre_shape = self._get_output_shape(self.pre_model, input_shape)
-        for i in range(int(np.floor(np.log(pre_shape[1] / 2) / np.log(2)))):
-            conv_z_model += [nn.Conv2d(ngf * mult, ngf * mult, kernel_size=3,
-                                  stride=2, padding=1),
-                             norm_layer(ngf * mult, affine=True),
+        ngf = ngf * 2**n_downsampling
+        # downsample latent path to ngf \approx 2*latent_nc, spatial unchanged
+        n_downsampling_latent = int(np.floor(
+            np.log2(ngf / (2 * latent_nc))
+        ))
+        for i in range(n_downsampling_latent):
+            next_ngf = int(ngf / 2)
+            latent_model += [nn.ReflectionPad2d(3),
+                             *norm_layer(
+                                nn.Conv2d(ngf, next_ngf, kernel_size=7),
+                                next_ngf,
+                             ),
                              nn.ReLU(True)]
+            ngf = next_ngf
+        latent_model += [nn.ReflectionPad2d(3)]
+        latent_model += [nn.Conv2d(ngf, latent_nc, kernel_size=7)]
+        latent_model += [nn.Tanh()]
+        return nn.Sequential(*latent_model)
 
-        self.conv_z_model = nn.Sequential(*conv_z_model)
+    # uses batchnorm regardless
+    def _def_conv_z_model(ngf, pre_output_shape, latent_z, norm_layer):
+        conv_z_model = []
 
-        z_path_shape = self._get_output_shape(self.conv_z_model, pre_shape)
-        z_path_size = self.linear_z_input_size = int(np.prod(z_path_shape))
+        # downsample z path to max(2*latent_z total, spacial dimension ~2 pix)
+        ngf = pre_output_shape[0]
+        pre_size = int(np.prod(pre_output_shape))
+        n_downsampling_z = int(np.floor(min(
+            np.log2(pre_output_shape[1] / 2),
+            np.log2(pre_size / 2 * latent_z) / 2,
+        )))
+        for i in range(n_downsampling_z):
+            conv_z_model += [*norm_layer(
+                                nn.Conv2d(ngf, ngf, kernel_size=3, stride=2, padding=1),
+                                ngf,
+                             ),
+                             nn.ReLU(True)]
+        return nn.Sequential(*conv_z_model)
+
+    def _def_linear_z_model(linear_z_input_size, latent_z):
+        linear_z_model = []
+        z_path_size = linear_z_input_size
         # FC linear z path
         for i in range(2):
             next_z_path_size = max(latent_z, int(np.ceil(z_path_size / 2)))
             linear_z_model += [nn.Linear(z_path_size, next_z_path_size),
-                           nn.BatchNorm1d(next_z_path_size, affine=True),
-                           nn.ReLU(True)]
+                               nn.BatchNorm1d(next_z_path_size, affine = True),
+                               nn.ReLU(True)]
             z_path_size = next_z_path_size
 
         linear_z_model += [nn.Linear(z_path_size, latent_z)]
-        self.linear_z_model = nn.Sequential(*linear_z_model)
+        return nn.Sequential(*linear_z_model)
 
 
     def _get_output_shape(self, model, input_shape):
@@ -258,7 +299,7 @@ class LatentResnetGenerator(nn.Module):
 # Code and idea originally from Justin Johnson's architecture.
 # https://github.com/jcjohnson/fast-neural-style/
 class ResnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, gpu_ids=[], padding_type='reflect'):
+    def __init__(self, input_nc, output_nc, ngf=64, padding_type='reflect', norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6, gpu_ids=[], downsampled = False):
         assert(n_blocks >= 0)
         super(ResnetGenerator, self).__init__()
         self.input_nc = input_nc
@@ -267,17 +308,31 @@ class ResnetGenerator(nn.Module):
         self.gpu_ids = gpu_ids
 
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0),
-                 norm_layer(ngf),
+                 *norm_layer(
+                    nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0),
+                    ngf,
+                 ),
                  nn.ReLU(True)]
 
         n_downsampling = 2
-        for i in range(n_downsampling):
-            mult = 2**i
-            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
-                                stride=2, padding=1),
-                      norm_layer(ngf * mult * 2),
-                      nn.ReLU(True)]
+        if not downsampled:
+            for i in range(n_downsampling):
+                mult = 2**i
+                model += [*norm_layer(
+                            nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
+                                    stride=2, padding=1),
+                            ngf * mult * 2,
+                          ),
+                          nn.ReLU(True)]
+        else:
+            for i in range(n_downsampling):
+                mult = 2**i
+                model += [*norm_layer(
+                            nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
+                                    padding=1),
+                            ngf * mult * 2,
+                          ),
+                          nn.ReLU(True)]
 
         mult = 2**n_downsampling
         for i in range(n_blocks):
@@ -285,10 +340,12 @@ class ResnetGenerator(nn.Module):
 
         for i in range(n_downsampling):
             mult = 2**(n_downsampling - i)
-            model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1),
-                      norm_layer(int(ngf * mult / 2)),
+            model += [*norm_layer(
+                        nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                           kernel_size=3, stride=2,
+                                           padding=1, output_padding=1),
+                        int(ngf * mult / 2),
+                      ),
                       nn.ReLU(True)]
         model += [nn.ReflectionPad2d(3)]
         model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
@@ -321,8 +378,10 @@ class ResnetBlock(nn.Module):
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
 
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p),
-                       norm_layer(dim),
+        conv_block += [*norm_layer(
+                            nn.Conv2d(dim, dim, kernel_size=3, padding=p),
+                            dim,
+                       ),
                        nn.ReLU(True)]
         if use_dropout:
             conv_block += [nn.Dropout(0.5)]
@@ -336,8 +395,7 @@ class ResnetBlock(nn.Module):
             p = 1
         else:
             raise NotImplementedError('padding [%s] is not implemented' % padding_type)
-        conv_block += [nn.Conv2d(dim, dim, kernel_size=3, padding=p),
-                       norm_layer(dim)]
+        conv_block += norm_layer(nn.Conv2d(dim, dim, kernel_size=3, padding=p), dim)
 
         return nn.Sequential(*conv_block)
 
@@ -389,9 +447,7 @@ class UnetSkipConnectionBlock(nn.Module):
         downconv = nn.Conv2d(outer_nc, inner_nc, kernel_size=4,
                              stride=2, padding=1)
         downrelu = nn.LeakyReLU(0.2, True)
-        downnorm = norm_layer(inner_nc)
         uprelu = nn.ReLU(True)
-        upnorm = norm_layer(outer_nc)
 
         if outermost:
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
@@ -405,14 +461,14 @@ class UnetSkipConnectionBlock(nn.Module):
                                         kernel_size=4, stride=2,
                                         padding=1)
             down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
+            up = [uprelu, *norm_layer(upconv, outer_nc)]
             model = down + up
         else:
             upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
                                         kernel_size=4, stride=2,
                                         padding=1)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
+            down = [downrelu, *norm_layer(downconv, inner_nc)]
+            up = [uprelu, upconv, *norm_layer(upconv, outer_nc)]
 
             if use_dropout:
                 model = down + [submodule] + up + [nn.Dropout(0.5)]
@@ -430,7 +486,7 @@ class UnetSkipConnectionBlock(nn.Module):
 
 # Defines the PatchGAN discriminator with the specified arguments.
 class NLayerDiscriminator(nn.Module):
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_sigmoid=False, gpu_ids=[]):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=get_norm_layer('batch'), use_sigmoid=False, gpu_ids=[]):
         super(NLayerDiscriminator, self).__init__()
         self.gpu_ids = gpu_ids
 
@@ -447,18 +503,22 @@ class NLayerDiscriminator(nn.Module):
             nf_mult_prev = nf_mult
             nf_mult = min(2**n, 8)
             sequence += [
-                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
+                *norm_layer(
+                    nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
                           kernel_size=kw, stride=2, padding=padw),
-                norm_layer(ndf * nf_mult),
+                    ndf * nf_mult,
+                ),
                 nn.LeakyReLU(0.2, True)
             ]
 
         nf_mult_prev = nf_mult
         nf_mult = min(2**n_layers, 8)
         sequence += [
-            nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
+            *norm_layer(
+                nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult,
                       kernel_size=kw, stride=1, padding=padw),
-            norm_layer(ndf * nf_mult),
+                ndf * nf_mult,
+            ),
             nn.LeakyReLU(0.2, True)
         ]
 
@@ -490,10 +550,10 @@ class NLayerDiscriminator1d(nn.Module):
         input_size = input_size * 2
 
         for n in range(1, n_layers):
-            new_input_size = max(12, int(np.ceil(input_size / 2)))
+            new_input_size = max(24, int(np.ceil(input_size / 2)))
             sequence += [
                 nn.Linear(input_size, new_input_size),
-                nn.BatchNorm1d(new_input_size, affine=True),
+                nn.BatchNorm1d(new_input_size, affine = True),
                 nn.LeakyReLU(0.2, True),
             ]
             input_size = new_input_size
@@ -501,7 +561,7 @@ class NLayerDiscriminator1d(nn.Module):
         new_input_size = max(6, int(np.ceil(input_size / 2)))
         sequence += [
             nn.Linear(input_size, new_input_size),
-            nn.BatchNorm1d(new_input_size, affine=True),
+            nn.BatchNorm1d(new_input_size, affine = True),
             nn.LeakyReLU(0.2, True),
         ]
         input_size = new_input_size

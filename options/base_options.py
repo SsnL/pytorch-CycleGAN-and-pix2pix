@@ -10,6 +10,7 @@ class BaseOptions():
 
     def initialize(self):
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
+        self.parser.add_argument('--gen_data', action='store_true', help='if true, data are generated from dataset with name specified in dataroot option in snake style')
         self.parser.add_argument('--batchSize', type=int, default=1, help='input batch size')
         self.parser.add_argument('--display_num', type=int, default=1, help='number of training inputs in each display. set equal to batchSize to display full batch')
         self.parser.add_argument('--loadSize', type=int, default=286, help='scale images to this size')
@@ -18,6 +19,7 @@ class BaseOptions():
         self.parser.add_argument('--output_nc', type=int, default=3, help='# of output image channels')
         self.parser.add_argument('--ngf', type=int, default=64, help='# of gen filters in first conv layer')
         self.parser.add_argument('--ndf', type=int, default=64, help='# of discrim filters in first conv layer')
+        self.parser.add_argument('--save_mean_var', action='store_true', help='if true, generators re-apply mean and variance after network. This alleviates mean variance loss after norm layers')
         self.parser.add_argument('--which_model_netD', type=str, default='basic', help='selects model to use for netD')
         self.parser.add_argument('--which_model_netG', type=str, default='resnet_9blocks', help='selects model to use for netG')
         self.parser.add_argument('--n_layers_D', type=int, default=3, help='only used if which_model_netD==n_layers')
@@ -26,9 +28,9 @@ class BaseOptions():
         self.parser.add_argument('--lambda_B', type=float, default=10.0, help='weight for cycle loss (B -> A -> B)')
         self.parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
         self.parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
-        self.parser.add_argument('--dataset_mode', type=str, default='unaligned', help='chooses how datasets are loaded. [unaligned | aligned | single]')
+        self.parser.add_argument('--dataset_mode', type=str, default='unaligned', help='chooses how datasets are loaded. [unaligned | aligned | single | code]')
         self.parser.add_argument('--model', type=str, default='cycle_gan',
-                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, , multi_cycle_gan, dual_gan, latent_cycle_gan, test, ...')
+                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, multi_cycle_gan_hub, multi_cycle_gan, dual_gan, latent_cycle_gan, weighted_cycle_gan, test, ...')
         self.parser.add_argument('--latent_nc', type=int, default=1,
                                  help='[latent_cycle_gan] number of channels in latent space')
         self.parser.add_argument('--latent_z', type=int, default=8,
@@ -55,7 +57,7 @@ class BaseOptions():
         self.parser.add_argument('--max_dataset_size', type=int, default=float("inf"), help='Maximum number of samples allowed per dataset. If the dataset directory contains more than max_dataset_size, only a subset is loaded.')
         self.parser.add_argument('--resize_or_crop', type=str, default='resize_and_crop', help='scaling and cropping of images at load time [resize_and_crop|crop|scale_width|scale_width_and_crop]')
         self.parser.add_argument('--no_flip', action='store_true', help='if specified, do not flip the images for data argumentation')
-        self.parser.add_argument('--weight_transform', type=str, default=None, help='if not empty, expression of variable "l", the loss for a particular data, that represents the transformed loss that weight is proportional to, e.g., "np.exp(-l)"')
+        self.parser.add_argument('--weight_transform', type=str, default='np.exp(-l)', help='[weighted_cycle_gan] expression of variable "l", the loss for a particular data, that represents the transformed loss that weight is proportional to, e.g., "np.exp(-l)"')
         self.parser.add_argument('--weight_mean_estimator', type=str, default='last_k', help='method to estimate mean of transformed loss, e.g. last_k, decay')
         self.parser.add_argument('--weight_mean_estimator_arg', type=float, default=10, help='argument to the mean estimator')
 
