@@ -10,6 +10,10 @@ def create_model(opt):
         assert(opt.dataset_mode == 'unaligned')
         from .weighted_cycle_gan_model import WeightedCycleGANModel
         model = WeightedCycleGANModel()
+    elif opt.model == 'cycle_gan_z':
+        assert(opt.dataset_mode == 'unaligned')
+        from .cycle_gan_z_model import CycleGANZModel
+        model = CycleGANZModel()
     elif opt.model == 'dual_gan':
         assert(opt.dataset_mode == 'unaligned')
         from .dual_gan_model import DualGANModel

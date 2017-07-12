@@ -1,7 +1,6 @@
 import os
 import torch
-from collections import OrderedDict
-
+from collections import OrderedDict, Sequence
 
 class BaseModel():
     def name(self):
@@ -57,7 +56,11 @@ class BaseModel():
             visuals = OrderedDict()
             for i in range(self.display_num):
                 for k, v in self.get_current_visuals_at(i).items():
-                    visuals['{}_{}'.format(k, i)] = v
+                    if isinstance(k, Sequence) and not isinstance(k, str):
+                        label, supl = k
+                        visuals['{}_{}'.format(label, i), supl] = v
+                    else:
+                        visuals['{}_{}'.format(k, i)] = v
             return visuals
 
     def get_current_errors(self):

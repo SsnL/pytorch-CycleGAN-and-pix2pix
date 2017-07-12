@@ -30,11 +30,14 @@ class CycleGANModel(BaseModel):
 
         self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        not opt.no_dropout, gpu_ids = self.gpu_ids)
+                                        not opt.no_dropout,
+                                        norm_first=opt.norm_first,
+                                        gpu_ids = self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        not opt.no_dropout, gpu_ids = self.gpu_ids)
-
+                                        not opt.no_dropout,
+                                        norm_first=opt.norm_first,
+                                        gpu_ids = self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
@@ -94,9 +97,6 @@ class CycleGANModel(BaseModel):
         self.real_B = Variable(self.input_B)
 
     def test(self):
-        lambda_A = self.opt.lambda_A
-        lambda_B = self.opt.lambda_B
-
         self.real_A = Variable(self.input_A, volatile=True)
         self.fake_B = self.netG_A.forward(self.real_A)
         self.rec_A = self.netG_B.forward(self.fake_B)

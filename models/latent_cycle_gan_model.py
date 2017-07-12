@@ -18,7 +18,7 @@ class LatentCycleGANModel(BaseModel):
         BaseModel.initialize(self, opt)
 
         nb = opt.batchSize
-        size = opt.fineSize
+        self.size = size = opt.fineSize
         self.latent_nc = opt.latent_nc
         self.latent_z = opt.latent_z
 
@@ -32,16 +32,14 @@ class LatentCycleGANModel(BaseModel):
                                         opt.input_nc, opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
                                         opt.use_dropout, size,
-                                        (opt.latent_nc, opt.latent_z),
-                                        self.gpu_ids)
+                                        opt.latent_nc, opt.latent_z,
+                                        opt.norm_first, self.gpu_ids)
         self.netG_B_to_latent, self.netG_B_from_latent = networks.define_G(
                                         opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
                                         opt.use_dropout, size,
-                                        (opt.latent_nc, opt.latent_z),
-                                        self.gpu_ids)
-
-        self.estimate_weight = bool(opt.weight_transform)
+                                        opt.latent_nc, opt.latent_z,
+                                        opt.norm_first, self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
@@ -84,14 +82,47 @@ class LatentCycleGANModel(BaseModel):
             self.optimizer_D_z = torch.optim.Adam(self.netD_z.parameters(),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
 
-            print('---------- Networks initialized -------------')
-            networks.print_network(self.netG_A_to_latent)
-            networks.print_network(self.netG_A_from_latent)
-            networks.print_network(self.netG_B_to_latent)
-            networks.print_network(self.netG_B_from_latent)
+        print('---------- Networks initialized -------------')
+        networks.print_network(self.netG_A_to_latent)
+        networks.print_network(self.netG_A_from_latent)
+        networks.print_network(self.netG_B_to_latent)
+        networks.print_network(self.netG_B_from_latent)
+        if self.isTrain:
             networks.print_network(self.netD_latent)
             networks.print_network(self.netD_z)
-            print('-----------------------------------------------')
+        print('---------------- Generator paths --------------')
+        print('A->B:')
+        latent_shape = LatentCycleGANModel.print_netG_path(opt.input_nc, opt.output_nc, size, self.netG_A_to_latent, opt.gpu_ids)
+        self.latent_A_size = latent_shape[1]
+        print('B->A:')
+        latent_shape = LatentCycleGANModel.print_netG_path(opt.output_nc, opt.input_nc, size, self.netG_B_to_latent, opt.gpu_ids)
+        self.latent_B_size = latent_shape[1]
+        print('-----------------------------------------------')
+
+    def shape_str(shape, name, total = None):
+        shape = tuple(shape)
+        if total is None:
+            return '{}: {} [{} total]'.format(name, shape, int(np.prod(shape)))
+        else:
+            return '{}: {} [{} effective total]'.format(name, shape, total)
+
+    def print_netG_path(input_nc, output_nc, size, netG_to_latent, gpu_ids):
+        assert(netG_to_latent.__class__ == networks.LatentResnetGenerator)
+        input_shape = (input_nc, size, size)
+        pre_shape = networks.get_output_shape(netG_to_latent.pre_model, input_shape, gpu_ids)
+        latent_shape = networks.get_output_shape(netG_to_latent.latent_model, pre_shape, gpu_ids)
+        z_shape = networks.get_output_shape(netG_to_latent.z_model, pre_shape, gpu_ids)
+        from_latent_input_shape = (latent_shape[0] + z_shape[0] + input_nc * 2, *latent_shape[1:])
+        output_shape = (output_nc, size, size)
+        print('To latent:')
+        print('\t%s' % LatentCycleGANModel.shape_str(input_shape, 'Input'))
+        print('\t%s' % LatentCycleGANModel.shape_str(pre_shape, 'Pre-compute'))
+        print('\t%s' % LatentCycleGANModel.shape_str(latent_shape, 'Latent'))
+        print('\t%s' % LatentCycleGANModel.shape_str(z_shape, 'Z'))
+        print('From latent:')
+        print('\t%s' % LatentCycleGANModel.shape_str(from_latent_input_shape, 'Latent+Z+Stats', np.prod(latent_shape) + z_shape[0] + input_nc * 2))
+        print('\t%s' % LatentCycleGANModel.shape_str(output_shape, 'Output'))
+        return latent_shape
 
     def set_input(self, input):
         AtoB = self.opt.which_direction == 'AtoB'
@@ -232,9 +263,9 @@ class LatentCycleGANModel(BaseModel):
         errors['Cyc_B'] = Cyc_B
         return errors
 
-    def z_str(self, z_single, precision = 2):
-        return np.array_str(z_single.data.cpu().float().numpy(), precision = precision)
-        # return '<span style="font-family: monospace;font-size: 8px;">{}</span>'.format(s)
+    def z_str(z_single, precision = 2):
+        s = np.array_str(z_single.data.cpu().float().numpy(), precision = precision, suppress_small = True)
+        return '<div style="font-family: monospace;font-size: 8px;white-space: pre-wrap;word-wrap: break-word;">{}</div>'.format(s)
 
     def get_current_visuals(self):
         self.real_z_A = self.real_z[:self.latent_A.size(0)]
@@ -248,20 +279,30 @@ class LatentCycleGANModel(BaseModel):
     def get_current_visuals_at(self, i):
         visuals = OrderedDict()
         if i < self.real_A.size(0):
-            visuals['real_A{}'.format(self.z_str(self.z_A[i]))] = util.tensor2im(self.real_A.data, i)
-            # if self.latent_nc == 3:
-            #     visuals['latent_A'] = util.tensor2im(self.latent_A.data, i)
-            # elif self.latent_nc == 1:
-            #     visuals['latent_A'] = util.tensor2im(self.latent_A.data, i).repeat(3, 2)
-            visuals['fake_B{}'.format(self.z_str(self.real_z_A[i]))] = util.tensor2im(self.fake_B.data, i)
+            # z_A are generated from real_A
+            visuals['real_A', LatentCycleGANModel.z_str(self.z_A[i])] = \
+                util.tensor2im(self.real_A.data, i)
+            if self.size == self.latent_A_size:
+                if self.latent_nc == 3:
+                    visuals['latent_A'] = util.tensor2im(self.latent_A.data, i)
+                elif self.latent_nc == 1:
+                    visuals['latent_A'] = util.tensor2im(self.latent_A.data, i).repeat(3, 2)
+            # fake_B is generated from sampled real_z_A
+            visuals['fake_B', LatentCycleGANModel.z_str(self.real_z_A[i])] = \
+                util.tensor2im(self.fake_B.data, i)
             visuals['rec_A'] = util.tensor2im(self.rec_A.data, i)
         if i < self.real_B.size(0):
-            visuals['real_B{}'.format(self.z_str(self.z_B[i]))] = util.tensor2im(self.real_B.data, i)
-            # if self.latent_nc == 3:
-            #     visuals['latent_B'] = util.tensor2im(self.latent_B.data, i)
-            # elif self.latent_nc == 1:
-            #     visuals['latent_B'] = util.tensor2im(self.latent_B.data, i).repeat(3, 2)
-            visuals['fake_A{}'.format(self.z_str(self.real_z_B[i]))] = util.tensor2im(self.fake_A.data, i)
+            # z_B are generated from real_B
+            visuals['real_B', LatentCycleGANModel.z_str(self.z_B[i])] = \
+                util.tensor2im(self.real_B.data, i)
+            if self.size == self.latent_B_size:
+                if self.latent_nc == 3:
+                    visuals['latent_B'] = util.tensor2im(self.latent_B.data, i)
+                elif self.latent_nc == 1:
+                    visuals['latent_B'] = util.tensor2im(self.latent_B.data, i).repeat(3, 2)
+            # fake_A is generated from sampled real_z_B
+            visuals['fake_A', LatentCycleGANModel.z_str(self.real_z_B[i])] = \
+                util.tensor2im(self.fake_A.data, i)
             visuals['rec_B'] = util.tensor2im(self.rec_B.data, i)
         return visuals
 

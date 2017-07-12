@@ -29,7 +29,7 @@ for epoch in range(1, total_niter + 1):
         model.optimize_parameters()
 
         if total_steps // opt.display_freq > display_times:
-            visualizer.display_current_results(model.get_current_visuals(), epoch, epoch_iter)
+            visualizer.display_current_results(model.get_current_visuals(), epoch)
             display_times = total_steps // opt.display_freq
 
         if total_steps // opt.print_freq > print_times:

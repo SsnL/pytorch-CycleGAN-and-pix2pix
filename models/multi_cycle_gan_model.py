@@ -94,8 +94,11 @@ class MultiCycleGANModel(BaseModel):
         self.Gs = {}
 
         for (label, nc), (to_label, to_nc) in itertools.permutations(zip(self.inputs, opt.ncs), 2):
-            self.Gs[(label, to_label)] = networks.define_G(nc, to_nc,
-                                     opt.ngf, opt.which_model_netG, opt.norm, opt.use_dropout, gpu_ids = self.gpu_ids)
+            self.Gs[(label, to_label)] = networks.define_G(nc, to_nc, opt.ngf,
+                                                opt.which_model_netG, opt.norm,
+                                                opt.use_dropout,
+                                                norm_first=opt.norm_first,
+                                                gpu_ids = self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan

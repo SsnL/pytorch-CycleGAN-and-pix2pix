@@ -7,42 +7,55 @@ import itertools
 import util.util as util
 from util.image_pool import ImagePool
 from .base_model import BaseModel
+from .latent_cycle_gan_model import LatentCycleGANModel
 from . import networks, mean_estimator
 import sys
 
-
-class CycleGANModel(BaseModel):
+class CycleGANZModel(BaseModel):
     def name(self):
-        return 'CycleGANModel'
+        return 'CycleGANZModel'
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
 
         nb = opt.batchSize
-        size = opt.fineSize
+        self.size = size = opt.fineSize
+        self.latent_z = opt.latent_z
+        self.A_nc = opt.input_nc
+        self.B_nc = opt.output_nc
+        self.image_z_cycle_ratio = opt.image_z_cycle_ratio
+        assert(0 <= self.image_z_cycle_ratio <= 1)
 
-        self.input_A = self.Tensor(nb, opt.input_nc, size, size)
-        self.input_B = self.Tensor(nb, opt.output_nc, size, size)
+        self.input_A_im = self.Tensor(nb, opt.input_nc, size, size)
+        self.sampled_A_z = self.Tensor(nb, opt.latent_z)
+        self.input_B_im = self.Tensor(nb, opt.output_nc, size, size)
+        self.sampled_B_z = self.Tensor(nb, opt.latent_z)
 
         # load/define networks
         # The naming conversion is different from those used in the paper
         # Code (paper): G_A (G), G_B (F), D_A (D_Y), D_B (D_X)
 
-        self.netG_A = networks.define_G(opt.input_nc, opt.output_nc, opt.ngf,
+        self.netG_A = networks.define_G(opt.input_nc + opt.latent_z,
+                                        opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, gpu_ids = self.gpu_ids)
-        self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf,
+                                        opt.use_dropout, size,
+                                        None, opt.latent_z, opt.norm_first,
+                                        gpu_ids = self.gpu_ids)
+        self.netG_B = networks.define_G(opt.output_nc + opt.latent_z,
+                                        opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, gpu_ids = self.gpu_ids)
+                                        opt.use_dropout, size,
+                                        None, opt.latent_z, opt.norm_first,
+                                        gpu_ids = self.gpu_ids)
 
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
-            self.netD_A = networks.define_D(opt.output_nc, opt.ndf,
+            self.netD_A = networks.define_D(opt.output_nc + opt.latent_z, opt.ndf,
                                             opt.which_model_netD,
                                             opt.n_layers_D, opt.norm,
                                             use_sigmoid, self.gpu_ids)
-            self.netD_B = networks.define_D(opt.input_nc, opt.ndf,
+            self.netD_B = networks.define_D(opt.input_nc + opt.latent_z, opt.ndf,
                                             opt.which_model_netD,
                                             opt.n_layers_D, opt.norm,
                                             use_sigmoid, self.gpu_ids)
@@ -82,30 +95,41 @@ class CycleGANModel(BaseModel):
 
     def set_input(self, input):
         AtoB = self.opt.which_direction == 'AtoB'
-        input_A = input['A' if AtoB else 'B']
-        input_B = input['B' if AtoB else 'A']
-        self.input_A.resize_(input_A.size()).copy_(input_A)
-        self.input_B.resize_(input_B.size()).copy_(input_B)
+        im_A = input['A' if AtoB else 'B']
+        im_B = input['B' if AtoB else 'A']
+        self.input_A_im.resize_(im_A.size()).copy_(im_A)
+        self.input_B_im.resize_(im_B.size()).copy_(im_B)
+        z_A = torch.randn(im_A.size(0), self.latent_z)
+        z_B = torch.randn(im_B.size(0), self.latent_z)
+        self.sampled_A_z.resize_(z_A.size()).copy_(z_A)
+        self.sampled_B_z.resize_(z_B.size()).copy_(z_B)
         self.A_paths = input['A_paths' if AtoB else 'B_paths']
         self.B_paths = input['B_paths' if AtoB else 'A_paths']
 
-    def forward(self):
-        self.real_A = Variable(self.input_A)
-        self.real_B = Variable(self.input_B)
+    def im_z_to_input(self, im, z):
+        return torch.cat((im, z[:, :, None, None].expand(z.size(0), self.latent_z, self.size, self.size)), 1)
+
+    def forward(self, volatile = False):
+        self.real_A_im = Variable(self.input_A_im, volatile = volatile)
+        self.real_A_z = Variable(self.sampled_A_z, volatile = volatile)
+        self.real_A = self.im_z_to_input(self.real_A_im, self.real_A_z)
+
+        self.real_B_im = Variable(self.input_B_im, volatile = volatile)
+        self.real_B_z = Variable(self.sampled_B_z, volatile = volatile)
+        self.real_B = self.im_z_to_input(self.real_B_im, self.real_B_z)
+
+        self.fake_B_im, self.fake_B_z = self.netG_A.forward(self.real_A)
+        self.fake_B = self.im_z_to_input(self.fake_B_im, self.fake_B_z)
+        self.rec_A_im, self.rec_A_z = self.netG_B.forward(self.fake_B)
+
+        self.fake_A_im, self.fake_A_z = self.netG_B.forward(self.real_B)
+        self.fake_A = self.im_z_to_input(self.fake_A_im, self.fake_A_z)
+        self.rec_B_im, self.rec_B_z = self.netG_A.forward(self.fake_A)
 
     def test(self):
-        lambda_A = self.opt.lambda_A
-        lambda_B = self.opt.lambda_B
+        self.forward(True)
 
-        self.real_A = Variable(self.input_A, volatile=True)
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
-
-        self.real_B = Variable(self.input_B, volatile=True)
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B  = self.netG_A.forward(self.fake_A)
-
-    #get image paths
+    # get image paths
     def get_image_paths_at(self, i):
         replicate = 4 if self.opt.identity > 0 else 3
         image_paths = []
@@ -143,10 +167,12 @@ class CycleGANModel(BaseModel):
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed.
-            self.idt_A = self.netG_A.forward(self.real_B)
+            self.idt_A_im, self.idt_A_z = self.netG_A.forward(self.real_B)
+            self.idt_A = self.im_z_to_input(self.idt_A_im, self.idt_A_z)
             self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * lambda_B * lambda_idt
             # G_B should be identity if real_A is fed.
-            self.idt_B = self.netG_B.forward(self.real_A)
+            self.idt_B_im, self.idt_B_z = self.netG_B.forward(self.real_A)
+            self.idt_B = self.im_z_to_input(self.idt_B_im, self.idt_B_z)
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
         else:
             self.loss_idt_A = 0
@@ -154,19 +180,20 @@ class CycleGANModel(BaseModel):
 
         # Loss
         # A
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
         pred_fake = self.netD_A.forward(self.fake_B)
         self.loss_G_A = self.criterionGAN(pred_fake, True)
-        self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
+        self.loss_cycle_A_im = self.criterionCycle(self.rec_A_im, self.real_A_im) * self.image_z_cycle_ratio * lambda_A
+        self.loss_cycle_A_z = self.criterionCycle(self.rec_A_z, self.real_A_z) * (1 - self.image_z_cycle_ratio) * lambda_A
         # B
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B = self.netG_A.forward(self.fake_A)
         pred_fake = self.netD_B.forward(self.fake_A)
         self.loss_G_B = self.criterionGAN(pred_fake, True)
-        self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_B
+        self.loss_cycle_B_im = self.criterionCycle(self.rec_B_im, self.real_B_im) * self.image_z_cycle_ratio * lambda_B
+        self.loss_cycle_B_z = self.criterionCycle(self.rec_B_z, self.real_B_z) * (1 - self.image_z_cycle_ratio) * lambda_B
         # combined loss
-        self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B
+        self.loss_G = self.loss_G_A + self.loss_G_B + \
+            self.loss_cycle_A_im + self.loss_cycle_B_im + \
+            self.loss_cycle_A_z + self.loss_cycle_B_z + \
+            self.loss_idt_A + self.loss_idt_B
         self.loss_G.backward()
 
     def optimize_parameters(self):
@@ -188,20 +215,24 @@ class CycleGANModel(BaseModel):
     def get_current_errors(self):
         D_A = self.loss_D_A.data[0]
         G_A = self.loss_G_A.data[0]
-        Cyc_A = self.loss_cycle_A.data[0]
+        Cyc_A_im = self.loss_cycle_A_im.data[0]
+        Cyc_A_z = self.loss_cycle_A_z.data[0]
         D_B = self.loss_D_B.data[0]
         G_B = self.loss_G_B.data[0]
-        Cyc_B = self.loss_cycle_B.data[0]
+        Cyc_B_im = self.loss_cycle_B_im.data[0]
+        Cyc_B_z = self.loss_cycle_B_z.data[0]
         errors = OrderedDict()
         errors['D_A'] = D_A
         errors['G_A'] = G_A
-        errors['Cyc_A'] = Cyc_A
+        errors['Cyc_A_im'] = Cyc_A_im
+        errors['Cyc_A_z'] = Cyc_A_z
         if self.opt.identity > 0.0:
             idt_A = self.loss_idt_A.data[0]
             errors['idt_A'] = idt_A
         errors['D_B'] = D_B
         errors['G_B'] = G_B
-        errors['Cyc_B'] = Cyc_B
+        errors['Cyc_B_im'] = Cyc_B_im
+        errors['Cyc_B_z'] = Cyc_B_z
         if self.opt.identity > 0.0:
             idt_B = self.loss_idt_B.data[0]
             errors['idt_B'] = idt_B
@@ -210,17 +241,25 @@ class CycleGANModel(BaseModel):
     def get_current_visuals_at(self, i):
         visuals = OrderedDict()
         if i < self.real_A.size(0):
-            visuals['real_A'] = util.tensor2im(self.real_A.data, i)
-            visuals['fake_B'] = util.tensor2im(self.fake_B.data, i)
-            visuals['rec_A'] = util.tensor2im(self.rec_A.data, i)
+            visuals['real_A', LatentCycleGANModel.z_str(self.real_A_z[i])] = \
+                util.tensor2im(self.real_A[:, :self.A_nc].data, i)
+            visuals['fake_B', LatentCycleGANModel.z_str(self.fake_B_z[i])] = \
+                util.tensor2im(self.fake_B_im.data, i)
+            visuals['rec_A', LatentCycleGANModel.z_str(self.rec_A_z[i])] = \
+                util.tensor2im(self.rec_A_im.data, i)
             if self.opt.identity > 0.0:
-                visuals['idt_A'] = util.tensor2im(self.idt_A.data, i)
+                visuals['idt_A', LatentCycleGANModel.z_str(self.idx_A_z[i])] = \
+                    util.tensor2im(self.idt_A_im.data, i)
         if i < self.real_B.size(0):
-            visuals['real_B'] = util.tensor2im(self.real_B.data, i)
-            visuals['fake_A'] = util.tensor2im(self.fake_A.data, i)
-            visuals['rec_B'] = util.tensor2im(self.rec_B.data, i)
+            visuals['real_B', LatentCycleGANModel.z_str(self.real_B_z[i])] = \
+                util.tensor2im(self.real_B[:, :self.B_nc].data, i)
+            visuals['fake_A', LatentCycleGANModel.z_str(self.fake_A_z[i])] = \
+                util.tensor2im(self.fake_A_im.data, i)
+            visuals['rec_B', LatentCycleGANModel.z_str(self.rec_B_z[i])] = \
+                util.tensor2im(self.rec_B_im.data, i)
             if self.opt.identity > 0.0:
-                visuals['idt_B'] = util.tensor2im(self.idt_B.data, i)
+                visuals['idt_B', LatentCycleGANModel.z_str(self.idt_B_z[i])] = \
+                    util.tensor2im(self.idt_B_im.data, i)
         return visuals
 
     def save(self, label):
