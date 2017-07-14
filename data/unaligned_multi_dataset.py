@@ -1,5 +1,5 @@
 import os.path
-from data.base_dataset import BaseDataset
+from data.base_dataset import BaseDataset, get_transform
 from data.image_folder import make_dataset
 from PIL import Image
 import string
@@ -24,7 +24,7 @@ class UnalignedMultiDataset(BaseDataset):
             self.pathss.append(sorted(paths))
             self.sizes.append(len(paths))
 
-        self.transform = self._get_transformation(opt)
+        self.transform = get_transform(opt)
 
     def __getitem__(self, index):
         rv = {}

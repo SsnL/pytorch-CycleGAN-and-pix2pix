@@ -1,5 +1,5 @@
 import os.path
-from data.base_dataset import BaseDataset
+from data.base_dataset import BaseDataset, get_transform
 from data.image_folder import make_dataset
 from PIL import Image
 import numpy as np
@@ -9,7 +9,7 @@ class UnalignedRedGreenDataset(BaseDataset):
         self.opt = opt
         self.dataset_size = dataset_size
         self.size = opt.fineSize
-        self.transform = self._get_transformation(opt)
+        self.transform = get_transform(opt)
 
     def __getitem__(self, index):
 
