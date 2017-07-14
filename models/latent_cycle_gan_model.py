@@ -112,7 +112,7 @@ class LatentCycleGANModel(BaseModel):
         pre_shape = networks.get_output_shape(netG_to_latent.pre_model, input_shape, gpu_ids)
         latent_shape = networks.get_output_shape(netG_to_latent.latent_model, pre_shape, gpu_ids)
         z_shape = networks.get_output_shape(netG_to_latent.z_model, pre_shape, gpu_ids)
-        from_latent_input_shape = (latent_shape[0] + z_shape[0] + input_nc * 2, *latent_shape[1:])
+        from_latent_input_shape = (latent_shape[0] + z_shape[0], *latent_shape[1:])
         output_shape = (output_nc, size, size)
         print('To latent:')
         print('\t%s' % LatentCycleGANModel.shape_str(input_shape, 'Input'))
@@ -188,14 +188,12 @@ class LatentCycleGANModel(BaseModel):
         # Loss
         # A
         self.latent_A, self.z_A = self.netG_A_to_latent.forward(self.real_A)
-        self.stats_A = self.get_mean_std(self.real_A)
-        self.rec_A = self.forward_from_latent(self.latent_A, self.z_A, *self.stats_A, self.netG_B_from_latent)
+        self.rec_A = self.forward_from_latent(self.latent_A, self.z_A, self.netG_B_from_latent)
         self.loss_G_latent_A, self.loss_G_z_A, self.loss_cycle_A = self.get_loss( \
             self.real_A, self.latent_A, self.z_A, self.rec_A, False, True, lambda_A)
         # B
         self.latent_B, self.z_B = self.netG_B_to_latent.forward(self.real_B)
-        self.stats_B = self.get_mean_std(self.real_B)
-        self.rec_B = self.forward_from_latent(self.latent_B, self.z_B, *self.stats_B, self.netG_A_from_latent)
+        self.rec_B = self.forward_from_latent(self.latent_B, self.z_B, self.netG_A_from_latent)
         self.loss_G_latent_B, self.loss_G_z_B, self.loss_cycle_B = self.get_loss( \
             self.real_B, self.latent_B, self.z_B, self.rec_B, True, True, lambda_B)
         # combined loss
@@ -212,10 +210,9 @@ class LatentCycleGANModel(BaseModel):
         input_sig = input_reshaped.std(2).squeeze(2)
         return input_mu, input_sig
 
-    def forward_from_latent(self, latent, z, input_mu, input_sig, netG_from_latent):
+    def forward_from_latent(self, latent, z, netG_from_latent):
         k, _, w, h = latent.size()
-        z_aug = torch.cat((z, input_mu, input_sig), 1)
-        z_expanded = z_aug[:, :, None, None].expand(k, z_aug.size(1), w, h)
+        z_expanded = z[:, :, None, None].expand(k, z.size(1), w, h)
         input_latent_z = torch.cat((latent, z_expanded), 1)
         return netG_from_latent.forward(input_latent_z)
 

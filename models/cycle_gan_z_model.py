@@ -24,7 +24,9 @@ class CycleGANZModel(BaseModel):
         self.A_nc = opt.input_nc
         self.B_nc = opt.output_nc
         self.image_z_cycle_ratio = opt.image_z_cycle_ratio
+        self.z_cycle_multiplier = opt.z_cycle_multiplier
         assert(0 <= self.image_z_cycle_ratio <= 1)
+        assert(0 <= self.z_cycle_multiplier)
 
         self.input_A_im = self.Tensor(nb, opt.input_nc, size, size)
         self.sampled_A_z = self.Tensor(nb, opt.latent_z)
@@ -51,14 +53,18 @@ class CycleGANZModel(BaseModel):
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
-            self.netD_A = networks.define_D(opt.output_nc + opt.latent_z, opt.ndf,
+            self.netD_A = networks.define_D(opt.output_nc, opt.ndf,
                                             opt.which_model_netD,
                                             opt.n_layers_D, opt.norm,
                                             use_sigmoid, self.gpu_ids)
-            self.netD_B = networks.define_D(opt.input_nc + opt.latent_z, opt.ndf,
+            self.netD_B = networks.define_D(opt.input_nc, opt.ndf,
                                             opt.which_model_netD,
                                             opt.n_layers_D, opt.norm,
                                             use_sigmoid, self.gpu_ids)
+            self.netD_z = networks.define_D_1d(opt.latent_z,
+                                               opt.which_model_netD,
+                                               opt.n_layers_D, use_sigmoid,
+                                               self.gpu_ids)
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
             self.criterionCycle = torch.nn.L1Loss()
@@ -77,12 +83,15 @@ class CycleGANZModel(BaseModel):
         if self.isTrain:
             self.fake_A_pool = ImagePool(opt.pool_size)
             self.fake_B_pool = ImagePool(opt.pool_size)
+            self.fake_z_pool = ImagePool(opt.pool_size * 2)
             # initialize optimizers
             self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
             self.optimizer_D_A = torch.optim.Adam(self.netD_A.parameters(),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
             self.optimizer_D_B = torch.optim.Adam(self.netD_B.parameters(),
+                                                lr=self.current_lr, betas=(opt.beta1, 0.999))
+            self.optimizer_D_z = torch.optim.Adam(self.netD_z.parameters(),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
 
         print('---------- Networks initialized -------------')
@@ -91,6 +100,7 @@ class CycleGANZModel(BaseModel):
         if self.isTrain:
             networks.print_network(self.netD_A)
             networks.print_network(self.netD_B)
+            networks.print_network(self.netD_z)
         print('-----------------------------------------------')
 
     def set_input(self, input):
@@ -153,12 +163,17 @@ class CycleGANZModel(BaseModel):
         return loss_D
 
     def backward_D_A(self):
-        fake_B = self.fake_B_pool.query(self.fake_B)
-        self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B, fake_B)
+        fake_B_im = self.fake_B_pool.query(self.fake_B_im)
+        self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B_im, fake_B_im)
 
     def backward_D_B(self):
-        fake_A = self.fake_A_pool.query(self.fake_A)
-        self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, fake_A)
+        fake_A_im = self.fake_A_pool.query(self.fake_A_im)
+        self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A_im, fake_A_im)
+
+    def backward_D_z(self):
+        fake_z = self.fake_z_pool.query(torch.cat((self.fake_A_z, self.fake_B_z), 0))
+        real_z = torch.cat((self.real_A_z, self.real_B_z), 0)
+        self.loss_D_z = self.backward_D_basic(self.netD_z, real_z, fake_z)
 
     def backward_G(self):
         lambda_idt = self.opt.identity
@@ -180,21 +195,42 @@ class CycleGANZModel(BaseModel):
 
         # Loss
         # A
-        pred_fake = self.netD_A.forward(self.fake_B)
-        self.loss_G_A = self.criterionGAN(pred_fake, True)
-        self.loss_cycle_A_im = self.criterionCycle(self.rec_A_im, self.real_A_im) * self.image_z_cycle_ratio * lambda_A
-        self.loss_cycle_A_z = self.criterionCycle(self.rec_A_z, self.real_A_z) * (1 - self.image_z_cycle_ratio) * lambda_A
+        self.loss_G_A_im, self.loss_G_A_z = self.lerp(
+            self.criterionGAN(self.netD_A.forward(self.fake_B_im), True),
+            self.criterionGAN(self.netD_z.forward(self.fake_B_z), True),
+            self.image_z_cycle_ratio,
+        )
+        self.loss_cycle_A_im, self.loss_cycle_A_z = self.lerp(
+            self.criterionCycle(self.rec_A_im, self.real_A_im),
+            self.criterionCycle(self.rec_A_z, self.real_A_z) * self.z_cycle_multiplier,
+            self.image_z_cycle_ratio,
+            lambda_A,
+        )
         # B
-        pred_fake = self.netD_B.forward(self.fake_A)
-        self.loss_G_B = self.criterionGAN(pred_fake, True)
-        self.loss_cycle_B_im = self.criterionCycle(self.rec_B_im, self.real_B_im) * self.image_z_cycle_ratio * lambda_B
-        self.loss_cycle_B_z = self.criterionCycle(self.rec_B_z, self.real_B_z) * (1 - self.image_z_cycle_ratio) * lambda_B
+        self.loss_G_B_im, self.loss_G_B_z = self.lerp(
+            self.criterionGAN(self.netD_B.forward(self.fake_A_im), True),
+            self.criterionGAN(self.netD_z.forward(self.fake_A_z), True),
+            self.image_z_cycle_ratio,
+        )
+        self.loss_cycle_B_im, self.loss_cycle_B_z = self.lerp(
+            self.criterionCycle(self.rec_B_im, self.real_B_im),
+            self.criterionCycle(self.rec_B_z, self.real_B_z) * self.z_cycle_multiplier,
+            self.image_z_cycle_ratio,
+            lambda_B,
+        )
         # combined loss
-        self.loss_G = self.loss_G_A + self.loss_G_B + \
+        self.loss_G = self.loss_G_A_im + self.loss_G_B_im + \
+            self.loss_G_A_z + self.loss_G_B_z + \
             self.loss_cycle_A_im + self.loss_cycle_B_im + \
             self.loss_cycle_A_z + self.loss_cycle_B_z + \
             self.loss_idt_A + self.loss_idt_B
         self.loss_G.backward()
+
+    def lerp(self, oa, ob, alpha, scale = 1):
+        a = oa * alpha * scale
+        b = ob * (1 - alpha) * scale
+        return a, b
+
 
     def optimize_parameters(self):
         # forward
@@ -211,31 +247,41 @@ class CycleGANZModel(BaseModel):
         self.optimizer_D_B.zero_grad()
         self.backward_D_B()
         self.optimizer_D_B.step()
+        # D_z
+        self.optimizer_D_z.zero_grad()
+        self.backward_D_z()
+        self.optimizer_D_z.step()
 
     def get_current_errors(self):
         D_A = self.loss_D_A.data[0]
-        G_A = self.loss_G_A.data[0]
+        G_A_im = self.loss_G_A_im.data[0]
+        G_A_z = self.loss_G_A_z.data[0]
         Cyc_A_im = self.loss_cycle_A_im.data[0]
         Cyc_A_z = self.loss_cycle_A_z.data[0]
         D_B = self.loss_D_B.data[0]
-        G_B = self.loss_G_B.data[0]
+        G_B_im = self.loss_G_B_im.data[0]
+        G_B_z = self.loss_G_B_z.data[0]
         Cyc_B_im = self.loss_cycle_B_im.data[0]
         Cyc_B_z = self.loss_cycle_B_z.data[0]
+        D_z = self.loss_D_z.data[0]
         errors = OrderedDict()
         errors['D_A'] = D_A
-        errors['G_A'] = G_A
+        errors['G_A_im'] = G_A_im
+        errors['G_A_z'] = G_A_z
         errors['Cyc_A_im'] = Cyc_A_im
         errors['Cyc_A_z'] = Cyc_A_z
         if self.opt.identity > 0.0:
             idt_A = self.loss_idt_A.data[0]
             errors['idt_A'] = idt_A
         errors['D_B'] = D_B
-        errors['G_B'] = G_B
+        errors['G_B_im'] = G_B_im
+        errors['G_B_z'] = G_B_z
         errors['Cyc_B_im'] = Cyc_B_im
         errors['Cyc_B_z'] = Cyc_B_z
         if self.opt.identity > 0.0:
             idt_B = self.loss_idt_B.data[0]
             errors['idt_B'] = idt_B
+        errors['D_z'] = D_z
         return errors
 
     def get_current_visuals_at(self, i):
@@ -267,8 +313,11 @@ class CycleGANZModel(BaseModel):
         self.save_network(self.netD_A, 'D_A', label, self.gpu_ids)
         self.save_network(self.netG_B, 'G_B', label, self.gpu_ids)
         self.save_network(self.netD_B, 'D_B', label, self.gpu_ids)
+        self.save_network(self.netD_z, 'D_z', label, self.gpu_ids)
 
     def set_learning_rate(self, lr):
+        for param_group in self.optimizer_D_z.param_groups:
+            param_group['lr'] = lr
         for param_group in self.optimizer_D_A.param_groups:
             param_group['lr'] = lr
         for param_group in self.optimizer_D_B.param_groups:

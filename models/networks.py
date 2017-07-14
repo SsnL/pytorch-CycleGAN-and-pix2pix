@@ -66,7 +66,7 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch',
     if latent_nc is not None:
         assert(resnet_re_m is not None)
         netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, latent_z=latent_z, norm_first=norm_first, gpu_ids=gpu_ids)
-        netG_from_latent = ResnetGenerator(latent_nc + latent_z + input_nc * 2, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, gpu_ids=gpu_ids)
+        netG_from_latent = ResnetGenerator(latent_nc + latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, gpu_ids=gpu_ids)
         netG = (netG_to_latent, netG_from_latent)
     elif latent_z > 0:
         assert(resnet_re_m is not None)
@@ -78,7 +78,6 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch',
     elif which_model_netG == 'unet_256':
         netG = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout, gpu_ids=gpu_ids)
     else:
-        print('Generator model name [%s] is not recognized' % which_model_netG)
         raise NotImplementedError('Generator model name [%s] is not recognized' % which_model_netG)
     if type(netG) == tuple:
         for net in netG:
@@ -202,11 +201,9 @@ class FlattenToZModel(nn.Module):
             np.log2(pre_shape[1] / 4),
             np.log2(pre_size / (4 * latent_z)) / 2, # each downsample is 4x less total
         )))
+        n_downsampling_z = int(np.floor(np.log2(pre_shape[1])))
         for i in range(n_downsampling_z):
-            conv_z_model += [*norm_layer(
-                                nn.Conv2d(ngf, ngf, kernel_size=7, stride=2, padding=3),
-                                ngf,
-                             ),
+            conv_z_model += [nn.Conv2d(ngf, ngf, kernel_size=3, stride=2, padding=1),
                              nn.ReLU(True)]
         return nn.Sequential(*conv_z_model)
 
@@ -216,7 +213,7 @@ class FlattenToZModel(nn.Module):
         z_path_size = linear_z_input_size
         # FC linear z path
         for i in range(2):
-            next_z_path_size = max(latent_z * 2, int(np.ceil(z_path_size / 2)))
+            next_z_path_size = max(min(linear_z_input_size, latent_z * 2), int(np.ceil(z_path_size / 2)))
             linear_z_model += [nn.Linear(z_path_size, next_z_path_size),
                                # nn.BatchNorm1d(next_z_path_size, affine = True),
                                nn.ReLU(True)]
@@ -640,7 +637,6 @@ class NLayerDiscriminator1d(nn.Module):
 
         sequence = [
             nn.Linear(input_size, input_size * 2),
-            nn.BatchNorm1d(input_size * 2, affine=True),
             nn.LeakyReLU(0.2, True),
         ]
 
