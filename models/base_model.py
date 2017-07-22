@@ -1,5 +1,7 @@
+import numpy as np
 import os
 import torch
+from torch import nn
 from collections import OrderedDict, Sequence
 
 class BaseModel():
@@ -65,6 +67,16 @@ class BaseModel():
 
     def get_current_errors(self):
         return {}
+
+    @staticmethod
+    def z_str(z_single, precision = 2):
+        return np.array_str(z_single.data.cpu().float().numpy(), precision = precision, suppress_small = True)
+
+    def activate(self, net, input):
+        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+            return nn.parallel.data_parallel(net, input, self.gpu_ids)
+        else:
+            return net(input)
 
     def save(self, label):
         pass

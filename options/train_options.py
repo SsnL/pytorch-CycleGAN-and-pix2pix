@@ -17,10 +17,10 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--beta1', type=float, default=0.5, help='momentum term of adam')
         self.parser.add_argument('--initial_lr', type=float, default=0.0, help='initial learning rate for adam')
         self.parser.add_argument('--lr', type=float, default=0.0002, help='learning rate after warmup for adam')
-        self.parser.add_argument('--image_z_cycle_ratio', type=float, default=0.75, help='[cycle_gan_z] linearly combine cycle losses on reconstructed image and z')
-        self.parser.add_argument('--z_cycle_multiplier', type=float, default=0.25, help='[cycle_gan_z] multiplier to penalize cycle losses on reconstructed z')
         self.parser.add_argument('--lambdas', nargs='+', type=float, default=[10,10], help='[multi_cycle_gan, multi_cycle_gan_hub] cycle loss weights from reconstruction for each dataset')
         self.parser.add_argument('--non_hub_multiplier', type=float, default=0.5, help='[multi_cycle_gan_hub] multiplier for cycle loss from reconstruction from non-hub vertices')
+        self.parser.add_argument('--lambda_z_A', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (A -> B -> A)')
+        self.parser.add_argument('--lambda_z_B', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (B -> A -> B)')
         self.parser.add_argument('--pool_size', type=int, default=50, help='the size of image buffer that stores previously generated images')
         self.parser.add_argument('--no_html', action='store_true', help='do not save intermediate training results to [opt.checkpoints_dir]/[opt.name]/web/')
         self.isTrain = True

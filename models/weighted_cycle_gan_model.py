@@ -102,14 +102,14 @@ class WeightedCycleGANModel(BaseModel):
         lambda_B = self.opt.lambda_B
 
         self.real_A = Variable(self.input_A, volatile=True)
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
+        self.fake_B = self.netG_A.fwd(self.real_A)
+        self.rec_A = self.netG_B.fwd(self.fake_B)
         _, _, _, self.loss_weights_A = self.get_loss(self.real_A, self.fake_B, \
             self.rec_A, self.netD_A, lambda_A, self.mean_estimator_A)
 
         self.real_B = Variable(self.input_B, volatile=True)
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B  = self.netG_A.forward(self.fake_A)
+        self.fake_A = self.netG_B.fwd(self.real_B)
+        self.rec_B  = self.netG_A.fwd(self.fake_A)
         _, _, _, self.loss_weights_B = self.get_loss(self.real_B, self.fake_A, \
             self.rec_B, self.netD_B, lambda_B, self.mean_estimator_B)
 
@@ -125,10 +125,10 @@ class WeightedCycleGANModel(BaseModel):
 
     def backward_D_basic(self, netD, real, fake):
         # Real
-        pred_real = netD.forward(real)
+        pred_real = netD.fwd(real)
         loss_D_real = self.criterionGAN(pred_real, True)
         # Fake
-        pred_fake = netD.forward(fake.detach())
+        pred_fake = netD.fwd(fake.detach())
         loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss
         loss_D = (loss_D_real + loss_D_fake) * 0.5
@@ -151,10 +151,10 @@ class WeightedCycleGANModel(BaseModel):
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed.
-            self.idt_A = self.netG_A.forward(self.real_B)
+            self.idt_A = self.netG_A.fwd(self.real_B)
             self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * lambda_B * lambda_idt
             # G_B should be identity if real_A is fed.
-            self.idt_B = self.netG_B.forward(self.real_A)
+            self.idt_B = self.netG_B.fwd(self.real_A)
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
         else:
             self.loss_idt_A = 0
@@ -162,13 +162,13 @@ class WeightedCycleGANModel(BaseModel):
 
         # Loss
         # A
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
+        self.fake_B = self.netG_A.fwd(self.real_A)
+        self.rec_A = self.netG_B.fwd(self.fake_B)
         self.loss_G_A, self.loss_cycle_A, self.loss_est_A, self.loss_weights_A = \
             self.get_loss(self.real_A, self.fake_B, self.rec_A, self.netD_A, lambda_A, self.mean_estimator_A)
         # B
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B = self.netG_A.forward(self.fake_A)
+        self.fake_A = self.netG_B.fwd(self.real_B)
+        self.rec_B = self.netG_A.fwd(self.fake_A)
         self.loss_G_B, self.loss_cycle_B, self.loss_est_B, self.loss_weights_B = \
             self.get_loss(self.real_B, self.fake_A, self.rec_B, self.netD_B, lambda_B, self.mean_estimator_B)
         # combined loss
@@ -176,7 +176,7 @@ class WeightedCycleGANModel(BaseModel):
         self.loss_G.backward()
 
     def get_loss(self, real, fake, rec, netD, lamda, mean_estimator):
-        pred_fake = netD.forward(fake)
+        pred_fake = netD.fwd(fake)
         k = real.size()[0]
         losses_G = [None for _ in range(k)]
         losses_cycle = [None for _ in range(k)]

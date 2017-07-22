@@ -119,7 +119,7 @@ class MultiCycleGANModel(BaseModel):
         if self.isTrain:
             self.fake_pools = {}
             for label in self.inputs:
-                self.fake_pools[label] = ImagePool(opt.pool_size)
+                self.fake_pools[label] = ImagePool(opt.pool_size * (num_datasets - 1))
 
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
@@ -178,26 +178,27 @@ class MultiCycleGANModel(BaseModel):
 
     # return the rec images
     def forward_path(self, images, path, current_idx = 0):
-        current = path[current_idx]
-        target_idx = current_idx + 1
-        while target_idx < len(path):
+        for target_idx in range(1, len(path)):
+            current = path[target_idx - 1]
             target = path[target_idx]
-            images = self.Gs[(current, target)].forward(images)
-            current = target
-            target_idx += 1
+            to_target = path[:target_idx + 1]
+            if to_target in self.fakes:
+                images = self.fakes[to_target]
+            else:
+                images = self.fakes[to_target] = self.Gs[(current, target)].fwd(images)
         return images
 
     def forward(self, volatile = False):
-        self.reals = OrderedDict()
-        self.fakes = OrderedDict()
-        self.recs = OrderedDict()
+        self.reals = {}
+        self.fakes = {}
+        self.recs = {}
         for label in self.inputs:
             real = Variable(self.inputs[label], volatile = volatile)
             self.reals[label] = real
             for to_label in self.inputs:
                 if label == to_label:
                     continue
-                self.fakes[(label, to_label)] = self.Gs[(label, to_label)].forward(real)
+                self.fakes[(label, to_label)] = self.Gs[(label, to_label)].fwd(real)
         for label in self.inputs:
             for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):
                 rec = self.forward_path(self.fakes[(cycle[:2])], cycle, 1)
@@ -212,10 +213,10 @@ class MultiCycleGANModel(BaseModel):
         fake = self.fake_pools[label].query(new_fake)
         netD = self.Ds[label]
         # Real
-        pred_real = netD.forward(real)
+        pred_real = netD.fwd(real)
         loss_D_real = self.criterionGAN(pred_real, True)
         # Fake
-        pred_fake = netD.forward(fake.detach())
+        pred_fake = netD.fwd(fake.detach())
         loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss
         loss_D = (loss_D_real + loss_D_fake) * 0.5
@@ -235,7 +236,7 @@ class MultiCycleGANModel(BaseModel):
         for to_label in self.inputs:
             if to_label == label:
                 continue
-            pred_fake = self.Ds[to_label].forward(self.fakes[(label, to_label)])
+            pred_fake = self.Ds[to_label].fwd(self.fakes[(label, to_label)])
             loss_G += self.criterionGAN(pred_fake, True)
 
         for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):

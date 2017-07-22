@@ -68,13 +68,13 @@ class Pix2PixModel(BaseModel):
 
     def forward(self):
         self.real_A = Variable(self.input_A)
-        self.fake_B = self.netG.forward(self.real_A)
+        self.fake_B = self.netG.fwd(self.real_A)
         self.real_B = Variable(self.input_B)
 
     # no backprop gradients
     def test(self):
         self.real_A = Variable(self.input_A, volatile=True)
-        self.fake_B = self.netG.forward(self.real_A)
+        self.fake_B = self.netG.fwd(self.real_A)
         self.real_B = Variable(self.input_B, volatile=True)
 
     #get image paths
@@ -85,12 +85,12 @@ class Pix2PixModel(BaseModel):
         # Fake
         # stop backprop to the generator by detaching fake_B
         fake_AB = self.fake_AB_pool.query(torch.cat((self.real_A, self.fake_B), 1))
-        self.pred_fake = self.netD.forward(fake_AB.detach())
+        self.pred_fake = self.netD.fwd(fake_AB.detach())
         self.loss_D_fake = self.criterionGAN(self.pred_fake, False)
 
         # Real
         real_AB = torch.cat((self.real_A, self.real_B), 1)
-        self.pred_real = self.netD.forward(real_AB)
+        self.pred_real = self.netD.fwd(real_AB)
         self.loss_D_real = self.criterionGAN(self.pred_real, True)
 
         # Combined loss
@@ -101,7 +101,7 @@ class Pix2PixModel(BaseModel):
     def backward_G(self):
         # First, G(A) should fake the discriminator
         fake_AB = torch.cat((self.real_A, self.fake_B), 1)
-        pred_fake = self.netD.forward(fake_AB)
+        pred_fake = self.netD.fwd(fake_AB)
         self.loss_G_GAN = self.criterionGAN(pred_fake, True)
 
         # Second, G(A) = B

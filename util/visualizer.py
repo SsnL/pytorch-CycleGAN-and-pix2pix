@@ -48,7 +48,9 @@ class Visualizer():
                 idx = 0
                 for label, image_numpy in visuals.items():
                     if isinstance(label, collections.Sequence) and not isinstance(label, str):
-                        label = label[0] + label[1]
+                        label, supl = label
+                        supl = '<div style="font-family: monospace;font-size: 8px;white-space: pre-wrap;word-wrap: break-word;">{}</div>'.format(supl)
+                        label = label + supl
                     label_html_row += '<td>%s</td>' % label
                     images.append(image_numpy.transpose([2, 0, 1]))
                     idx += 1
@@ -71,6 +73,9 @@ class Visualizer():
             else:
                 idx = 1
                 for label, image_numpy in visuals.items():
+                    if isinstance(label, collections.Sequence) and not isinstance(label, str):
+                        label, supl = label
+                        label = label + supl
                     #image_numpy = np.flipud(image_numpy)
                     self.vis.image(image_numpy.transpose([2,0,1]), opts=dict(title=label),
                                        win=self.display_id + idx)
@@ -139,6 +144,9 @@ class Visualizer():
         for (label, image_numpy), image_path in zip(visuals.items(), image_paths):
             if isinstance(label, collections.Sequence) and not isinstance(label, str):
                 label, supl = label
+                text = label + ' ' + supl
+            else:
+                text = label
             short_path = ntpath.basename(image_path)
             name = os.path.splitext(short_path)[0]
             names.append(name)
@@ -148,7 +156,7 @@ class Visualizer():
             util.save_image(image_numpy, save_path)
 
             ims.append(image_name)
-            txts.append(label + supl)
+            txts.append(text)
             links.append(image_name)
 
         webpage.add_header(', '.join(map(itemgetter(0), itertools.groupby(names))))

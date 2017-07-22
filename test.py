@@ -26,11 +26,12 @@ webpage = html.HTML(web_dir, 'Experiment = %s, Phase = %s, Epoch = %s' % (opt.na
 for i, data in enumerate(dataset):
     if opt.how_many >= 0 and i >= opt.how_many:
         break
-    model.set_input(data)
-    model.test()
-    visuals = model.get_current_visuals()
-    img_paths = model.get_image_paths()
-    print('process image... %s' % ', '.join(map(itemgetter(0), itertools.groupby(img_paths))))
-    visualizer.save_images(webpage, visuals, img_paths)
+    for _ in range(opt.replicate):
+        model.set_input(data)
+        model.test()
+        visuals = model.get_current_visuals()
+        img_paths = model.get_image_paths()
+        visualizer.save_images(webpage, visuals, img_paths)
+    print('processed image... %s' % ', '.join(map(itemgetter(0), itertools.groupby(img_paths))))
 
 webpage.save()

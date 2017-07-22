@@ -28,16 +28,11 @@ class BaseOptions():
         self.parser.add_argument('--gpu_ids', type=str, default='0', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
         self.parser.add_argument('--name', type=str, default='experiment_name', help='name of the experiment. It decides where to store samples and models')
         self.parser.add_argument('--dataset_mode', type=str, default='unaligned', help='chooses how datasets are loaded. [unaligned | aligned | single | code]')
-        self.parser.add_argument('--model', type=str, default='cycle_gan',
-                                 help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, multi_cycle_gan_hub, multi_cycle_gan, dual_gan, latent_cycle_gan, weighted_cycle_gan, test, ...')
-        self.parser.add_argument('--latent_nc', type=int, default=1,
-                                 help='[latent_cycle_gan] number of channels in latent space')
-        self.parser.add_argument('--latent_z', type=int, default=8,
-                                 help='[latent_cycle_gan] z dimension')
-        self.parser.add_argument('--num_datasets', type=int, default=2,
-                                 help='[multi_cycle_gan, multi_cycle_gan_hub] number of datasets')
-        self.parser.add_argument('--hub', type=str, default='A',
-                                 help='[multi_cycle_gan_hub] which hub to use, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
+        self.parser.add_argument('--model', type=str, default='cycle_gan', help='chooses which model to use. cycle_gan, one_direction_test, pix2pix, multi_cycle_gan_hub, multi_cycle_gan, dual_gan, latent_cycle_gan, weighted_cycle_gan, test, ...')
+        self.parser.add_argument('--latent_nc', type=int, default=1, help='[latent_cycle_gan] number of channels in latent space')
+        self.parser.add_argument('--latent_z', type=int, default=8, help='[latent_cycle_gan] z dimension')
+        self.parser.add_argument('--num_datasets', type=int, default=2, help='[multi_cycle_gan, multi_cycle_gan_hub] number of datasets')
+        self.parser.add_argument('--hub', type=str, default='A', help='[multi_cycle_gan_hub] which hub to use, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
         self.parser.add_argument('--ncs', nargs='+', type=int, default=[3,3], help='[multi_cycle_gan, multi_cycle_gan_hub] # of output image channels for each dataset')
         self.parser.add_argument('--cycle_lengths', nargs='+', type=int, default=[2,3], help='[multi_cycle_gan] cycle loss lengths, suggested to be primes')
         self.parser.add_argument('--cycle_weights', nargs='+', type=float, default=[0.5,0.25], help='[multi_cycle_gan] cycle loss weights for each cycle length')
@@ -75,7 +70,7 @@ class BaseOptions():
             id = int(str_id)
             if id >= 0:
                 self.opt.gpu_ids.append(id)
-        
+
         # set gpu ids
         if len(self.opt.gpu_ids) > 0:
             torch.cuda.set_device(self.opt.gpu_ids[0])

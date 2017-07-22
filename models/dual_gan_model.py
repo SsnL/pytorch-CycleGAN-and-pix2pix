@@ -83,12 +83,12 @@ class DualGANModel(BaseModel):
 
     def test(self):
         self.real_A = Variable(self.input_A, volatile=True)
-        self.fake_B = self.netG_A.forward(self.real_A)
-        # self.rec_A = self.netG_B.forward(self.fake_B)
+        self.fake_B = self.netG_A.fwd(self.real_A)
+        # self.rec_A = self.netG_B.fwd(self.fake_B)
 
         self.real_B = Variable(self.input_B, volatile=True)
-        self.fake_A = self.netG_B.forward(self.real_B)
-        # self.rec_B  = self.netG_A.forward(self.fake_A)
+        self.fake_A = self.netG_B.fwd(self.real_B)
+        # self.rec_B  = self.netG_A.fwd(self.fake_A)
 
     #get image paths
     def get_image_paths_at(self, i):
@@ -102,10 +102,10 @@ class DualGANModel(BaseModel):
 
     def backward_D_basic(self, netD, real, fake):
         # Real
-        pred_real = netD.forward(real)
+        pred_real = netD.fwd(real)
         loss_D_real = self.criterionGAN(pred_real, True)
         # Fake
-        pred_fake = netD.forward(fake)
+        pred_fake = netD.fwd(fake)
         loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss
         loss_D = (loss_D_real + loss_D_fake) * 0.5
@@ -125,10 +125,10 @@ class DualGANModel(BaseModel):
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed.
-            self.idt_A = self.netG_A.forward(self.real_B)
+            self.idt_A = self.netG_A.fwd(self.real_B)
             self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * lambda_B * lambda_idt
             # G_B should be identity if real_A is fed.
-            self.idt_B = self.netG_B.forward(self.real_A)
+            self.idt_B = self.netG_B.fwd(self.real_A)
             self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
         else:
             self.loss_idt_A = 0
@@ -136,16 +136,16 @@ class DualGANModel(BaseModel):
 
         # Loss
         # A
-        self.fake_B = self.netG_A.forward(self.real_A)
-        self.rec_A = self.netG_B.forward(self.fake_B)
+        self.fake_B = self.netG_A.fwd(self.real_A)
+        self.rec_A = self.netG_B.fwd(self.fake_B)
         self.rAfB = torch.cat((self.real_A, self.fake_B), 1)
-        self.loss_G_A = self.criterionGAN(self.netD.forward(self.rAfB), 0.5)
+        self.loss_G_A = self.criterionGAN(self.netD.fwd(self.rAfB), 0.5)
         self.loss_cycle_A = self.criterionCycle(self.rec_A, self.real_A) * lambda_A
         # B
-        self.fake_A = self.netG_B.forward(self.real_B)
-        self.rec_B = self.netG_A.forward(self.fake_A)
+        self.fake_A = self.netG_B.fwd(self.real_B)
+        self.rec_B = self.netG_A.fwd(self.fake_A)
         self.fArB = torch.cat((self.fake_A, self.real_B), 1)
-        self.loss_G_B = self.criterionGAN(self.netD.forward(self.fArB), 0.5)
+        self.loss_G_B = self.criterionGAN(self.netD.fwd(self.fArB), 0.5)
         self.loss_cycle_B = self.criterionCycle(self.rec_B, self.real_B) * lambda_A
         # combined loss
         self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B + self.loss_idt_A + self.loss_idt_B

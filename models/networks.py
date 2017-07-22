@@ -90,6 +90,20 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch',
         netG.apply(weights_init)
     return netG
 
+def define_encoder(input_nc, input_size, ngf, latent_z, norm='batch', gpu_ids=[]):
+    encoder = None
+    use_gpu = len(gpu_ids) > 0
+    norm_layer = get_norm_layer(norm_type=norm)
+
+    if use_gpu:
+        assert(torch.cuda.is_available())
+
+    encoder = Encoder(input_nc, [input_nc, input_size, input_size], latent_z, ngf, norm_layer = norm_layer, gpu_ids = gpu_ids)
+    if len(gpu_ids) > 0:
+        encoder.cuda(device_id=gpu_ids[0])
+    encoder.apply(weights_init)
+    return encoder
+
 def define_D(input_nc, ndf, which_model_netD,
              n_layers_D=3, norm='batch', use_sigmoid=False, gpu_ids=[]):
     netD = None
@@ -141,6 +155,13 @@ def print_network(net):
 # Classes
 ##############################################################################
 
+def fwd(self, input):
+    if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
+        return nn.parallel.data_parallel(self, input, self.gpu_ids)
+    else:
+        return self(input)
+
+nn.Module.fwd = fwd
 
 # Defines the GAN loss which uses either LSGAN or the regular GAN.
 # When LSGAN is used, it is basically same as MSELoss,
@@ -178,7 +199,6 @@ class GANLoss(nn.Module):
         target_tensor = self.get_target_tensor(input, target_is_real)
         return self.loss(input, target_tensor)
 
-# serve as building block in generators
 class FlattenToZModel(nn.Module):
     def __init__(self, pre_shape, latent_z, norm_layer=nn.BatchNorm2d):
         assert(latent_z >= 0)
@@ -312,14 +332,9 @@ class LatentResnetGenerator(nn.Module):
         return nn.Sequential(*latent_model)
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            pre = nn.parallel.data_parallel(self.pre_model, input, self.gpu_ids)
-            latent = nn.parallel.data_parallel(self.latent_model, pre, self.gpu_ids)
-            z = nn.parallel.data_parallel(self.z_model, pre, self.gpu_ids)
-        else:
-            pre = self.pre_model(input)
-            latent = self.latent_model(pre)
-            z = self.z_model(pre)
+        pre = self.pre_model(input)
+        latent = self.latent_model(pre)
+        z = self.z_model(pre)
         return latent, z
 
 # Defines the generator that consists of Resnet blocks between a few
@@ -384,14 +399,9 @@ class ResnetGeneratorWithZ(nn.Module):
         self.z_model = FlattenToZModel(get_output_shape(self.pre_model, input_shape), latent_z, norm_layer)
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            pre = nn.parallel.data_parallel(self.pre_model, input, self.gpu_ids)
-            image = nn.parallel.data_parallel(self.image_model, pre, self.gpu_ids)
-            z = nn.parallel.data_parallel(self.z_model, pre, self.gpu_ids)
-        else:
-            pre = self.pre_model(input)
-            image = self.image_model(pre)
-            z = self.z_model(pre)
+        pre = self.pre_model(input)
+        image = self.image_model(pre)
+        z = self.z_model(pre)
         return image, z
 
 
@@ -448,10 +458,7 @@ class ResnetGenerator(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        return self.model(input)
 
 
 # Define a resnet block
@@ -523,10 +530,7 @@ class UnetGenerator(nn.Module):
         self.model = unet_block
 
     def forward(self, input):
-        if self.gpu_ids and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        return self.model(input)
 
 
 # Defines the submodule with skip connection.
@@ -572,10 +576,59 @@ class UnetSkipConnectionBlock(nn.Module):
         self.model = nn.Sequential(*model)
 
     def forward(self, x):
-        if self.outermost:
-            return self.model(x)
-        else:
-            return torch.cat([self.model(x), x], 1)
+        return torch.cat([self.model(x), x], 1)
+
+
+class Encoder(nn.Module):
+    def __init__(self, input_nc, input_shape, latent_z=8, ngf=64, n_layers=4, norm_layer=get_norm_layer('batch'), gpu_ids=[]):
+        super().__init__()
+        self.gpu_ids = gpu_ids
+
+        kw = 4
+        padw = int(np.ceil((kw-1)/2))
+        sequence = [
+            nn.Conv2d(input_nc, ngf, kernel_size=kw, stride=2, padding=padw),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2**n, 8)
+            sequence += [
+                *norm_layer(
+                    nn.Conv2d(ngf * nf_mult_prev, ngf * nf_mult,
+                          kernel_size=kw, stride=2, padding=padw),
+                    ngf * nf_mult,
+                ),
+                nn.LeakyReLU(0.2, True)
+            ]
+
+        nf_mult_prev = nf_mult
+        nf_mult = min(2**n_layers, 8)
+        sequence += [
+            *norm_layer(
+                nn.Conv2d(ngf * nf_mult_prev, ngf * nf_mult,
+                      kernel_size=kw, stride=1, padding=padw),
+                ngf * nf_mult,
+            ),
+            nn.LeakyReLU(0.2, True)
+        ]
+
+        sequence += [nn.Conv2d(ngf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw)]
+
+        self.model = nn.Sequential(*sequence)
+
+        size = int(np.prod(get_output_shape(self.model, input_shape)))
+        assert(size >= latent_z)
+        self.linear_model = nn.Sequential(
+            nn.LeakyReLU(0.2, True),
+            nn.Linear(size, latent_z),
+        )
+
+    def forward(self, input):
+        return self.linear_model(self.model(input).view(input.size(0), -1))
 
 
 # Defines the PatchGAN discriminator with the specified arguments.
@@ -624,10 +677,7 @@ class NLayerDiscriminator(nn.Module):
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
-        if len(self.gpu_ids) and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        return self.model(input)
 
 
 class NLayerDiscriminator1d(nn.Module):
@@ -636,30 +686,24 @@ class NLayerDiscriminator1d(nn.Module):
         self.gpu_ids = gpu_ids
 
         sequence = [
-            nn.Linear(input_size, input_size * 2),
-            nn.LeakyReLU(0.2, True),
+            nn.Linear(input_size, input_size * 64),
+            nn.ReLU(True),
+            nn.Linear(input_size * 64, input_size * 64),
+            # nn.BatchNorm1d(input_size * 64, affine = True),
+            nn.ReLU(True),
+            nn.Linear(input_size * 64, input_size * 64),
+            # nn.BatchNorm1d(input_size * 64, affine = True),
+            nn.ReLU(True),
         ]
 
-        input_size = input_size * 2
-
-        for n in range(1, n_layers):
-            new_input_size = max(24, int(np.ceil(input_size / 2)))
+        for n in range(3, n_layers):
             sequence += [
-                nn.Linear(input_size, new_input_size),
-                nn.BatchNorm1d(new_input_size, affine = True),
-                nn.LeakyReLU(0.2, True),
+                nn.Linear(input_size * 64, input_size * 64),
+                # nn.BatchNorm1d(input_size * 64, affine = True),
+                nn.ReLU(True),
             ]
-            input_size = new_input_size
 
-        new_input_size = max(6, int(np.ceil(input_size / 2)))
-        sequence += [
-            nn.Linear(input_size, new_input_size),
-            nn.BatchNorm1d(new_input_size, affine = True),
-            nn.LeakyReLU(0.2, True),
-        ]
-        input_size = new_input_size
-
-        sequence += [nn.Linear(input_size, 1)]
+        sequence += [nn.Linear(input_size * 64, 1)]
 
         if use_sigmoid:
             sequence += [nn.Sigmoid()]
@@ -667,7 +711,4 @@ class NLayerDiscriminator1d(nn.Module):
         self.model = nn.Sequential(*sequence)
 
     def forward(self, input):
-        if len(self.gpu_ids)  and isinstance(input.data, torch.cuda.FloatTensor):
-            return nn.parallel.data_parallel(self.model, input, self.gpu_ids)
-        else:
-            return self.model(input)
+        return self.model(input)

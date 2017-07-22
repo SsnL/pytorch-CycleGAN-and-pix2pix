@@ -125,21 +125,21 @@ class MultiCycleGANWithHubModel(BaseModel):
                 for to_label in self.inputs:
                     if to_label == self.hub:
                         continue
-                    fake = self.decorders[to_label].forward(real)
-                    rec = self.encoders[to_label].forward(fake)
+                    fake = self.decorders[to_label].fwd(real)
+                    rec = self.encoders[to_label].fwd(fake)
                     self.fakes[(label, to_label)] = fake
                     self.recs[(label, to_label)] = rec
             else:
-                fake_hub = self.encoders[label].forward(real)
+                fake_hub = self.encoders[label].fwd(real)
                 for to_label in self.inputs:
                     if to_label == label:
                         continue
                     elif to_label == self.hub:
                         fake = fake_hub
-                        rec = self.decorders[label].forward(fake_hub)
+                        rec = self.decorders[label].fwd(fake_hub)
                     else:
-                        fake = self.decorders[to_label].forward(fake_hub)
-                        rec = self.decorders[label].forward(self.encoders[to_label].forward(fake))
+                        fake = self.decorders[to_label].fwd(fake_hub)
+                        rec = self.decorders[label].fwd(self.encoders[to_label].fwd(fake))
                     self.fakes[(label, to_label)] = fake
                     self.recs[(label, to_label)] = rec
 
@@ -161,10 +161,10 @@ class MultiCycleGANWithHubModel(BaseModel):
         fake = self.fake_pools[label].query(new_fake)
         netD = self.Ds[label]
         # Real
-        pred_real = netD.forward(real)
+        pred_real = netD.fwd(real)
         loss_D_real = self.criterionGAN(pred_real, True)
         # Fake
-        pred_fake = netD.forward(fake.detach())
+        pred_fake = netD.fwd(fake.detach())
         loss_D_fake = self.criterionGAN(pred_fake, False)
         # Combined loss
         loss_D = (loss_D_real + loss_D_fake) * 0.5
@@ -184,7 +184,7 @@ class MultiCycleGANWithHubModel(BaseModel):
         for to_label in self.inputs:
             if to_label == label:
                 continue
-            pred_fake = self.Ds[to_label].forward(self.fakes[(label, to_label)])
+            pred_fake = self.Ds[to_label].fwd(self.fakes[(label, to_label)])
             loss_G_one = self.criterionGAN(pred_fake, True)
             loss_cycle_one = self.criterionCycle(self.recs[(label, to_label)], real)
             if label == self.hub or to_label == self.hub:
