@@ -135,7 +135,8 @@ class Visualizer():
     def save_images(self, webpage, visuals, image_paths):
         image_dir = webpage.get_image_dir()
 
-        names = []
+        prev_image_path = None
+        input_image_names = []
 
         ims = []
         txts = []
@@ -147,9 +148,12 @@ class Visualizer():
                 text = label + ' ' + supl
             else:
                 text = label
-            short_path = ntpath.basename(image_path)
-            name = os.path.splitext(short_path)[0]
-            names.append(name)
+
+            if image_path != prev_image_path:
+                prev_image_path = image_path
+                short_path = ntpath.basename(image_path)
+                name = os.path.splitext(short_path)[0]
+                input_image_names.append(name)
 
             image_name = '%s_%s.png' % (name, label)
             save_path = os.path.join(image_dir, image_name)
@@ -159,5 +163,5 @@ class Visualizer():
             txts.append(text)
             links.append(image_name)
 
-        webpage.add_header(', '.join(map(itemgetter(0), itertools.groupby(names))))
+        webpage.add_header(', '.join(input_image_names))
         webpage.add_images(ims, txts, links, width=self.win_size)

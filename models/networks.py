@@ -688,22 +688,20 @@ class NLayerDiscriminator1d(nn.Module):
         sequence = [
             nn.Linear(input_size, input_size * 64),
             nn.ReLU(True),
-            nn.Linear(input_size * 64, input_size * 64),
-            # nn.BatchNorm1d(input_size * 64, affine = True),
-            nn.ReLU(True),
-            nn.Linear(input_size * 64, input_size * 64),
-            # nn.BatchNorm1d(input_size * 64, affine = True),
-            nn.ReLU(True),
         ]
 
-        for n in range(3, n_layers):
+        for n in range(1, n_layers - 1):
             sequence += [
                 nn.Linear(input_size * 64, input_size * 64),
                 # nn.BatchNorm1d(input_size * 64, affine = True),
                 nn.ReLU(True),
             ]
 
-        sequence += [nn.Linear(input_size * 64, 1)]
+        sequence += [
+            nn.Linear(input_size * 64, input_size * 64),
+            nn.ReLU(True),
+            nn.Linear(input_size * 64, 1),
+        ]
 
         if use_sigmoid:
             sequence += [nn.Sigmoid()]

@@ -22,12 +22,6 @@ class EncoderCycleGANModel(BaseModel):
         self.A_nc = opt.input_nc
         self.B_nc = opt.output_nc
 
-        if self.isTrain:
-            self.image_z_cycle_ratio = opt.image_z_cycle_ratio
-            self.z_cycle_multiplier = opt.z_cycle_multiplier
-            assert(0 <= self.image_z_cycle_ratio <= 1)
-            assert(0 <= self.z_cycle_multiplier)
-
         self.input_A_im = self.Tensor(nb, opt.input_nc, size, size)
         self.random_A_z = self.Tensor(nb, opt.latent_z)
         self.input_B_im = self.Tensor(nb, opt.output_nc, size, size)
