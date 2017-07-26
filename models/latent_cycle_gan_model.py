@@ -31,13 +31,13 @@ class LatentCycleGANModel(BaseModel):
         self.netG_A_to_latent, self.netG_A_from_latent = networks.define_G(
                                         opt.input_nc, opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, size,
+                                        not opt.no_dropout, size,
                                         opt.latent_nc, opt.latent_z,
                                         opt.norm_first, self.gpu_ids)
         self.netG_B_to_latent, self.netG_B_from_latent = networks.define_G(
                                         opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout, size,
+                                        not opt.no_dropout, size,
                                         opt.latent_nc, opt.latent_z,
                                         opt.norm_first, self.gpu_ids)
 

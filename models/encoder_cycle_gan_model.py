@@ -34,13 +34,13 @@ class EncoderCycleGANModel(BaseModel):
         self.netG_A = networks.define_G(opt.input_nc + opt.latent_z,
                                         opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout,
+                                        not opt.no_dropout,
                                         norm_first = opt.norm_first,
                                         gpu_ids = self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc + opt.latent_z,
                                         opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        opt.use_dropout,
+                                        not opt.no_dropout,
                                         norm_first = opt.norm_first,
                                         gpu_ids = self.gpu_ids)
 

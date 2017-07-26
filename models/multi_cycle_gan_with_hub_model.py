@@ -55,12 +55,12 @@ class MultiCycleGANWithHubModel(BaseModel):
                 continue
             self.encoders[label] = networks.define_G(nc, hub_nc, opt.ngf,
                                      opt.which_model_netG, opt.norm,
-                                     opt.use_dropout,
+                                     not opt.no_dropout,
                                      norm_first = opt.norm_first,
                                      gpu_ids = self.gpu_ids)
             self.decorders[label] = networks.define_G(hub_nc, nc, opt.ngf,
                                      opt.which_model_netG, opt.norm,
-                                     opt.use_dropout,
+                                     not opt.no_dropout,
                                      norm_first = opt.norm_first,
                                      gpu_ids = self.gpu_ids)
 
