@@ -7,13 +7,14 @@ import itertools
 import util.util as util
 from util.image_pool import ImagePool
 from .base_model import BaseModel
+from .multi_cycle_gan_cycle_model import MultiCycleGANCycleModel
 from . import networks
 import sys
 import string
 
-class MultiCycleGANModel(BaseModel):
+class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
     def name(self):
-        return 'MultiCycleGANModel'
+        return 'MultiCycleGANLinkModel'
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
@@ -40,55 +41,16 @@ class MultiCycleGANModel(BaseModel):
             self.inputs[label] = self.Tensor(nb, nc, size, size)
 
         if self.isTrain:
-            self.lambdas = OrderedDict()
+            self.lambdas = {}
+            self.lambdas_link = {}
 
-            for label, lamda in zip(string.ascii_uppercase, opt.lambdas):
+            for label, lamda, lamda_link in zip(string.ascii_uppercase, opt.lambdas, opt.lambdas_link):
                 self.lambdas[label] = lamda
+                self.lambdas_link[label] = lamda_link
 
-        # preprocess with cycles
-        assert len(opt.cycle_lengths) == len(opt.cycle_weights) == len(opt.cycle_num_samples)
-
-        cl, cw, cn = zip(*list(sorted(zip(opt.cycle_lengths, opt.cycle_weights, opt.cycle_num_samples))))
-
-        self.sample_cycle_lengths = []
-        self.sample_cycle_weights = []
-        self.sample_cycle_num = []
-        self.exact_cycles = {label: [] for label in self.inputs}
-
-        all_mids = {l: {l: [[]]} for l in self.inputs}
-        last_exact_l = 1
-
-        # exact cycles
-        for l, w, n in zip(cl, cw, cn):
-            if l < 2:
-                raise ValueError("Cycle length must be at least 2.")
-            if l == last_exact_l:
-                raise ValueError("Cycle lengths must be distinct.")
-            if n > 0:
-                self.sample_cycle_lengths.append(l)
-                self.sample_cycle_weights.append(w)
-                self.sample_cycle_num.append(n)
-                continue
-            total = (num_datasets - 1) * (num_datasets - 2) ** (l - 2)
-            for label in self.inputs:
-                mids = all_mids[label]
-                for _ in range(last_exact_l - 1, l - 1):
-                    next_mids = defaultdict(list)
-                    for last_label, so_fars in mids.items():
-                        for next_label in self.inputs:
-                            if next_label == last_label or next_label == label:
-                                continue
-                            next_mids[next_label] += [so_far + [next_label] for so_far in so_fars]
-                    mids = next_mids
-                self.exact_cycles[label] += [((label,) + tuple(mid) + (label,), w / total) for mid in itertools.chain(*mids.values())]
-                all_mids[label] = mids
-            last_exact_l = l
-
-        print('----------- Exact cycles --------------')
-        for cycles in self.exact_cycles.values():
-            for cycle, weight in cycles:
-                print('%s\t%.4f' % ('->'.join(cycle), weight))
-        print('---------------------------------------')
+        self.num_visuals_per_label = 1 + \
+            (2 if self.opt.identity > 0 else 1) * (self.num_datasets - 1) + \
+            (self.num_datasets - 1) * (self.num_datasets - 2)
 
         # load/define networks
         self.Gs = {}
@@ -124,6 +86,7 @@ class MultiCycleGANModel(BaseModel):
             # define loss functions
             self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan, tensor=self.Tensor)
             self.criterionCycle = torch.nn.L1Loss()
+            self.criterionLink = networks.PairL1Loss()
             self.criterionIdt = torch.nn.L1Loss()
 
             # initialize optimizers
@@ -143,21 +106,6 @@ class MultiCycleGANModel(BaseModel):
             # networks.print_network(self.netD_B)
             # print('-----------------------------------------------')
 
-    # returns a dict of sampled {end_label: {cycle path tuple: weights, ...}, ...}
-    def sample_cycles(self):
-        samples = {label: defaultdict(float) for label in self.inputs}
-        for l, w, n in zip(self.sample_cycle_lengths, self.sample_cycle_weights, self.sample_cycle_num):
-            for label in self.inputs:
-                for _ in range(n):
-                    cycle = [label]
-                    last_label = label
-                    for __ in range(l - 1):
-                        avails = list(o for o in self.inputs if o != label and o != last_label)
-                        last_label = np.random.choice(avails)
-                        cycle.append(last_label)
-                    samples[label][tuple(cycle) + (label,)] += w / n
-        return {label: list(samples[label].items()) for label in samples}
-
     def set_input(self, input):
         for label in self.inputs:
             values = input[label]
@@ -169,28 +117,15 @@ class MultiCycleGANModel(BaseModel):
     #get image paths
     def get_image_paths_at(self, i):
         image_paths = []
-        no_rec_replicate = 1 + (2 if self.opt.identity > 0 else 1) * (self.num_datasets - 1)
         for label in self.inputs:
             if i < self.inputs[label].size(0):
-                num_cycles = len(self.exact_cycles[label] + self.sampled_cycles[label])
-                image_paths += [self.image_paths[label][i]] * (no_rec_replicate + num_cycles)
+                image_paths += [self.image_paths[label][i]] * self.num_visuals_per_label
         return image_paths
-
-    # return the rec images
-    def forward_path(self, images, path, current_idx = 0):
-        for target_idx in range(1, len(path)):
-            current = path[target_idx - 1]
-            target = path[target_idx]
-            to_target = path[:target_idx + 1]
-            if to_target in self.fakes:
-                images = self.fakes[to_target]
-            else:
-                images = self.fakes[to_target] = self.Gs[(current, target)].fwd(images)
-        return images
 
     def forward(self, volatile = False):
         self.reals = {}
         self.fakes = {}
+        self.links = defaultdict(OrderedDict)
         self.recs = {}
         for label in self.inputs:
             real = Variable(self.inputs[label], volatile = volatile)
@@ -198,11 +133,12 @@ class MultiCycleGANModel(BaseModel):
             for to_label in self.inputs:
                 if label == to_label:
                     continue
-                self.fakes[(label, to_label)] = self.Gs[(label, to_label)].fwd(real)
-        for label in self.inputs:
-            for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):
-                rec = self.forward_path(self.fakes[(cycle[:2])], cycle, 1)
-                self.recs[cycle] = rec
+                self.fakes[(label, to_label)] = fake = self.Gs[(label, to_label)].fwd(real)
+                self.recs[(label, to_label)] = self.Gs[(to_label, label)].fwd(fake)
+        for la, lb, lc in itertools.product(self.inputs, repeat = 3):
+            if la == lb or lb == lc or la == lc:
+                continue
+            self.links[(la, lc)][lb] = self.Gs[(lb, lc)].fwd(self.fakes[(la, lb)])
 
     def test(self):
         self.forward(True)
@@ -231,30 +167,36 @@ class MultiCycleGANModel(BaseModel):
 
         loss_G = 0
         loss_cycle = 0
+        loss_link = 0
 
         real = self.reals[label]
+
         for to_label in self.inputs:
             if to_label == label:
                 continue
-            pred_fake = self.Ds[to_label].fwd(self.fakes[(label, to_label)])
+            fake = self.fakes[(label, to_label)]
+            pred_fake = self.Ds[to_label].fwd(fake)
             loss_G += self.criterionGAN(pred_fake, True)
-
-        for cycle, weight in itertools.chain(self.exact_cycles[label], self.sampled_cycles[label]):
-            loss_cycle += self.criterionCycle(self.recs[cycle], real) * weight
+            loss_cycle += self.criterionCycle(self.recs[(label, to_label)], real)
+            for link in self.links[(label, to_label)].values():
+                loss_link += self.criterionLink(link, fake)
 
         loss_G /= self.num_datasets - 1
-        loss_cycle *= self.lambdas[label]
+        loss_cycle *= self.lambdas[label] / (self.num_datasets - 1)
+        loss_link *= self.lambdas_link[label] / ((self.num_datasets - 1) * (self.num_datasets - 2))
 
-        self.loss_cycles[label] = loss_cycle
         self.loss_Gs[label] = loss_G
+        self.loss_cycles[label] = loss_cycle
+        self.loss_links[label] = loss_link
 
-        total_loss = loss_G + loss_cycle
+        total_loss = loss_G + loss_cycle + loss_link
         total_loss.backward()
 
     def optimize_parameters(self):
         self.loss_Ds = {}
-        self.loss_cycles = {}
         self.loss_Gs = {}
+        self.loss_cycles = {}
+        self.loss_links = {}
         # forward
         self.forward()
         # Gs
@@ -284,6 +226,10 @@ class MultiCycleGANModel(BaseModel):
         for label in self.inputs:
             errors['Cyc_' + label] = self.loss_cycles[label].data[0]
 
+        # G link loss
+        for label in self.inputs:
+            errors['Link_' + label] = self.loss_links[label].data[0]
+
         # G identity loss
         if self.opt.identity > 0.0:
             raise NotImplemented
@@ -306,15 +252,17 @@ class MultiCycleGANModel(BaseModel):
                 # fake images
                 visuals['fake_' + label + to_label] = util.tensor2im(self.fakes[(label, to_label)].data)
                 nimgs += 1
+                # link images
+                for mid_label, link in self.links[(label, to_label)].items():
+                    visuals['link_' + label + mid_label + to_label] = util.tensor2im(link.data)
                 # identity rec images
                 if self.opt.identity > 0.0:
                     raise NotImplemented
                     for label in self.inputs:
                         visuals['idt_' + label + to_label] = util.tensor2im(self.idt_recs[(label, to_label)].data)
                         nimgs += 1
-            # rec images
-            for cycle, weight in self.exact_cycles[label] + self.sampled_cycles[label]:
-                visuals['rec_' + ''.join(cycle)] = util.tensor2im(self.recs[cycle].data)
+                # rec images
+                visuals['rec_' + label + to_label] = util.tensor2im(self.recs[(label, to_label)].data)
                 nimgs += 1
             # if necessary, add fillers till new row
             # when testing, outputing to webpage, so skip

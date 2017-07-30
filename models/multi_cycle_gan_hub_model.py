@@ -11,9 +11,9 @@ from . import networks
 import sys
 import string
 
-class MultiCycleGANWithHubModel(BaseModel):
+class MultiCycleGANHubModel(BaseModel):
     def name(self):
-        return 'MultiCycleGANWithHubModel'
+        return 'MultiCycleGANHubModel'
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)

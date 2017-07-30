@@ -10,7 +10,7 @@ class BaseModel():
 
     def initialize(self, opt):
         self.opt = opt
-        self.display_num = opt.display_num
+        self.display_num = min(opt.display_num, opt.batchSize)
         self.gpu_ids = opt.gpu_ids
         self.isTrain = opt.isTrain
         self.Tensor = torch.cuda.FloatTensor if self.gpu_ids else torch.Tensor

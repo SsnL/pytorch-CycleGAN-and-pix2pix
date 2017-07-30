@@ -28,12 +28,16 @@ def create_model(opt):
         model = LatentCycleGANModel()
     elif opt.model == 'multi_cycle_gan_hub':
         assert(opt.dataset_mode == 'unaligned')
-        from .multi_cycle_gan_with_hub_model import MultiCycleGANWithHubModel
-        model = MultiCycleGANWithHubModel()
-    elif opt.model == 'multi_cycle_gan':
+        from .multi_cycle_gan_hub_model import MultiCycleGANHubModel
+        model = MultiCycleGANHubModel()
+    elif opt.model == 'multi_cycle_gan_cycle':
         assert(opt.dataset_mode == 'unaligned')
-        from .multi_cycle_gan_model import MultiCycleGANModel
-        model = MultiCycleGANModel()
+        from .multi_cycle_gan_cycle_model import MultiCycleGANCycleModel
+        model = MultiCycleGANCycleModel()
+    elif opt.model == 'multi_cycle_gan_link':
+        assert(opt.dataset_mode == 'unaligned')
+        from .multi_cycle_gan_link_model import MultiCycleGANLinkModel
+        model = MultiCycleGANLinkModel()
     elif opt.model == 'pix2pix':
         assert(opt.dataset_mode == 'aligned')
         from .pix2pix_model import Pix2PixModel
