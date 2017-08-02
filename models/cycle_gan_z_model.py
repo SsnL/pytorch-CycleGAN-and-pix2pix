@@ -179,6 +179,8 @@ class CycleGANZModel(BaseModel):
         lambda_B = self.opt.lambda_B
         lambda_z_A = self.opt.lambda_z_A
         lambda_z_B = self.opt.lambda_z_B
+        gan_z_A_multiplier = self.opt.gan_z_A_multiplier
+        gan_z_B_multiplier = self.opt.gan_z_B_multiplier
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed.
@@ -196,12 +198,12 @@ class CycleGANZModel(BaseModel):
         # Loss
         # A
         self.loss_G_A_im = self.criterionGAN(self.netD_A.fwd(self.fake_B_im), True)
-        self.loss_G_A_z = self.criterionGAN(self.netD_z.fwd(self.fake_B_z), True)
+        self.loss_G_A_z = self.criterionGAN(self.netD_z.fwd(self.fake_B_z), True) * gan_z_A_multiplier
         self.loss_cycle_A_im = self.criterionCycle(self.rec_A_im, self.real_A_im) * lambda_z_A
         self.loss_cycle_A_z = self.criterionCycle(self.rec_A_z, self.real_A_z) * lambda_A
         # B
         self.loss_G_B_im = self.criterionGAN(self.netD_B.fwd(self.fake_A_im), True)
-        self.loss_G_B_z = self.criterionGAN(self.netD_z.fwd(self.fake_A_z), True)
+        self.loss_G_B_z = self.criterionGAN(self.netD_z.fwd(self.fake_A_z), True) * gan_z_B_multiplier
         self.loss_cycle_B_im = self.criterionCycle(self.rec_B_im, self.real_B_im) * lambda_z_B
         self.loss_cycle_B_z = self.criterionCycle(self.rec_B_z, self.real_B_z) * lambda_B
         # combined loss

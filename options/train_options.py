@@ -22,6 +22,8 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--non_hub_multiplier', type=float, default=0.5, help='[multi_cycle_gan_hub] multiplier for cycle loss from reconstruction from non-hub vertices')
         self.parser.add_argument('--lambda_z_A', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (A -> B -> A)')
         self.parser.add_argument('--lambda_z_B', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (B -> A -> B)')
+        self.parser.add_argument('--gan_z_A_multiplier', type=float, default=1.0, help='[cycle_gan_z, encoder_cycle_gan] weight for GAN loss on z (A -> B -> A)')
+        self.parser.add_argument('--gan_z_B_multiplier', type=float, default=1.0, help='[cycle_gan_z, encoder_cycle_gan] weight for GAN loss on z (B -> A -> B)')
         self.parser.add_argument('--pool_size', type=int, default=50, help='the size of image buffer that stores previously generated images')
         self.parser.add_argument('--no_html', action='store_true', help='do not save intermediate training results to [opt.checkpoints_dir]/[opt.name]/web/')
         self.isTrain = True
