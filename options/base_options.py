@@ -11,7 +11,7 @@ class BaseOptions():
         self.initialized = False
 
     def initialize(self):
-        self.parser.add_argument('--seed', type=int, default=None, help='pytorch seed')
+        self.parser.add_argument('--seed', type=int, default=None, help='random seed for python, numpy and pytorch')
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
         self.parser.add_argument('--gen_data', action='store_true', help='if true, data are generated from dataset with name specified in dataroot option in snake style')
         self.parser.add_argument('--batchSize', type=int, default=1, help='input batch size')
