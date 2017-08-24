@@ -26,11 +26,6 @@ class MultiCycleGANCycleModel(BaseModel):
             raise NotImplemented
 
         self.display_single_pane_ncols = opt.display_single_pane_ncols
-        # Some cycles can be sampled with replacement. If displaying in single
-        # image pane, we need filler image so that results from certain dataset
-        # are placed in beginning of new rows.
-        if self.display_single_pane_ncols > 0:
-            self.visual_filler = np.ones((size, size, 3), dtype = np.uint8) * 255
 
         assert len(opt.ncs) == num_datasets
 
@@ -39,19 +34,12 @@ class MultiCycleGANCycleModel(BaseModel):
         for label, nc in zip(string.ascii_uppercase, opt.ncs):
             self.inputs[label] = self.Tensor(nb, nc, size, size)
 
-        if self.isTrain:
-            self.lambdas = OrderedDict()
-
-            for label, lamda in zip(string.ascii_uppercase, opt.lambdas):
-                self.lambdas[label] = lamda
-
         # preprocess with cycles
-        assert len(opt.cycle_lengths) == len(opt.cycle_weights) == len(opt.cycle_num_samples)
+        assert len(opt.cycle_lengths) == len(opt.cycle_num_samples)
 
-        cl, cw, cn = zip(*list(sorted(zip(opt.cycle_lengths, opt.cycle_weights, opt.cycle_num_samples))))
+        cl, cn = zip(*list(sorted(zip(opt.cycle_lengths, opt.cycle_num_samples))))
 
         self.sample_cycle_lengths = []
-        self.sample_cycle_weights = []
         self.sample_cycle_num = []
         self.exact_cycles = {label: [] for label in self.inputs}
         self.exact_cycle_lengths = cl
@@ -59,18 +47,19 @@ class MultiCycleGANCycleModel(BaseModel):
         all_mids = {l: {l: [[]]} for l in self.inputs}
         last_exact_l = 1
 
+        if self.isTrain:
+            self.lambdas = self.opt.lambdas
+
         # exact cycles
-        for l, w, n in zip(cl, cw, cn):
+        for l, n in zip(cl, cn):
             if l < 2:
                 raise ValueError("Cycle length must be at least 2.")
             if l == last_exact_l:
                 raise ValueError("Cycle lengths must be distinct.")
             if n > 0:
                 self.sample_cycle_lengths.append(l)
-                self.sample_cycle_weights.append(w)
                 self.sample_cycle_num.append(n)
                 continue
-            total = (num_datasets - 1) * (num_datasets - 2) ** (l - 2)
             for label in self.inputs:
                 mids = all_mids[label]
                 for _ in range(last_exact_l - 1, l - 1):
@@ -81,7 +70,9 @@ class MultiCycleGANCycleModel(BaseModel):
                                 continue
                             next_mids[next_label] += [so_far + [next_label] for so_far in so_fars]
                     mids = next_mids
-                self.exact_cycles[label] += [((label,) + tuple(mid) + (label,), w / total) for mid in itertools.chain(*mids.values())]
+                for mid in itertools.chain(*mids.values()):
+                    all_but_last = (label,) + tuple(mid)
+                    self.exact_cycles[label].append((all_but_last + (label,), self.lambdas[all_but_last] if self.isTrain else 0))
                 all_mids[label] = mids
             last_exact_l = l
 
@@ -99,6 +90,7 @@ class MultiCycleGANCycleModel(BaseModel):
                                                 opt.which_model_netG, opt.norm,
                                                 not opt.no_dropout,
                                                 norm_first=opt.norm_first,
+                                                resize_conv=opt.resize_conv,
                                                 gpu_ids = self.gpu_ids)
 
         if self.isTrain:
@@ -147,7 +139,7 @@ class MultiCycleGANCycleModel(BaseModel):
     # returns a dict of sampled {end_label: {cycle path tuple: weights, ...}, ...}
     def sample_cycles(self):
         samples = {label: defaultdict(float) for label in self.inputs}
-        for l, w, n in zip(self.sample_cycle_lengths, self.sample_cycle_weights, self.sample_cycle_num):
+        for l, n in zip(self.sample_cycle_lengths, self.sample_cycle_num):
             for label in self.inputs:
                 for _ in range(n):
                     cycle = [label]
@@ -156,7 +148,8 @@ class MultiCycleGANCycleModel(BaseModel):
                         avails = list(o for o in self.inputs if o != label and o != last_label)
                         last_label = np.random.choice(avails)
                         cycle.append(last_label)
-                    samples[label][tuple(cycle) + (label,)] += w / n
+                    all_but_last = tuple(cycle)
+                    samples[label][all_but_last + (label,)] += self.lambdas[all_but_last]
         return {label: list(samples[label].items()) for label in samples}
 
     def set_input(self, input):
@@ -244,7 +237,6 @@ class MultiCycleGANCycleModel(BaseModel):
             loss_cycle += self.criterionCycle(self.recs[cycle], real) * weight
 
         loss_G /= self.num_datasets - 1
-        loss_cycle *= self.lambdas[label]
 
         self.loss_cycles[label] = loss_cycle
         self.loss_Gs[label] = loss_G
@@ -320,7 +312,7 @@ class MultiCycleGANCycleModel(BaseModel):
             # if necessary, add fillers till new row
             # when testing, outputing to webpage, so skip
             while self.isTrain and ncols > 0 and nimgs % ncols != 0:
-                visuals['filler_' + label + '_' + str(nimgs)] = self.visual_filler
+                visuals['filler_' + label + '_' + str(nimgs)] = None
                 nimgs += 1
         return visuals
 

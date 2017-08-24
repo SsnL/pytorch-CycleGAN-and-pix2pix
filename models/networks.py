@@ -4,7 +4,6 @@ import functools
 from torch.autograd import Variable
 import numpy as np
 import re
-from .weight_norm import weight_norm
 
 ###############################################################################
 # Functions
@@ -26,7 +25,7 @@ def get_norm_layer(norm_type='instance'):
     elif norm_type == 'instance_affine':
         norm_layer = lambda prev, ngf: [prev, nn.InstanceNorm2d(ngf, affine=True)]
     elif norm_type == 'weight':
-        norm_layer = lambda prev, ngf: [weight_norm(prev, dim = int('ConvTranspose' in prev.__class__.__name__))]
+        norm_layer = lambda prev, ngf: [nn.utils.weight_norm(prev, dim = int('ConvTranspose' in prev.__class__.__name__))]
     elif norm_type == 'identity':
         norm_layer = lambda prev, ngf: [prev]
     else:
@@ -48,7 +47,7 @@ def get_output_shape(model, input_shape, gpu_ids=[]):
 
 def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch',
              use_dropout=False, input_size=None, latent_nc=None, latent_z=0,
-             norm_first=False, gpu_ids=[]):
+             norm_first=False, resize_conv=False, gpu_ids=[]):
     netG = None
     use_gpu = len(gpu_ids) > 0
     norm_layer = get_norm_layer(norm_type=norm)
@@ -66,13 +65,13 @@ def define_G(input_nc, output_nc, ngf, which_model_netG, norm='batch',
     if latent_nc is not None:
         assert(resnet_re_m is not None)
         netG_to_latent = LatentResnetGenerator(input_nc, latent_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, latent_z=latent_z, norm_first=norm_first, gpu_ids=gpu_ids)
-        netG_from_latent = ResnetGenerator(latent_nc + latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, gpu_ids=gpu_ids)
+        netG_from_latent = ResnetGenerator(latent_nc + latent_z, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, norm_first=norm_first, resize_conv=resize_conv, gpu_ids=gpu_ids)
         netG = (netG_to_latent, netG_from_latent)
     elif latent_z > 0:
         assert(resnet_re_m is not None)
         netG = ResnetGeneratorWithZ(input_nc, output_nc, [input_nc, input_size, input_size], ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, latent_z=latent_z, norm_first=norm_first, gpu_ids=gpu_ids)
     elif resnet_re_m:
-        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, norm_first=norm_first, gpu_ids=gpu_ids)
+        netG = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=resnet_nblock, norm_first=norm_first, resize_conv=resize_conv, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_128':
         netG = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout, gpu_ids=gpu_ids)
     elif which_model_netG == 'unet_256':
@@ -416,7 +415,7 @@ class ResnetGeneratorWithZ(nn.Module):
 class ResnetGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, ngf=64, padding_type='reflect',
                  norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=6,
-                 norm_first=False, gpu_ids=[], downsampled = False):
+                 norm_first=False, resize_conv=False, gpu_ids=[], downsampled = False):
         assert(n_blocks >= 0)
         super(ResnetGenerator, self).__init__()
         self.input_nc = input_nc
@@ -448,13 +447,27 @@ class ResnetGenerator(nn.Module):
 
         for i in range(n_downsampling):
             mult = 2**(n_downsampling - i)
-            model += [*norm_layer(
-                        nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                           kernel_size=3, stride=2,
-                                           padding=1, output_padding=1),
-                        int(ngf * mult / 2),
-                      ),
-                      nn.ReLU(True)]
+            if resize_conv:
+                model += [
+                          nn.Upsample(scale_factor = 2, mode='bilinear'),
+                          nn.ReflectionPad2d(1),
+                          *norm_layer(
+                            nn.Conv2d(ngf * mult, int(ngf * mult / 2),
+                                               kernel_size=3, stride=1,
+                                               padding=0),
+                            int(ngf * mult / 2),
+                          ),
+                         ]
+            else:
+                model +=[
+                          *norm_layer(
+                            nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
+                                               kernel_size=3, stride=2,
+                                               padding=1, output_padding=1),
+                            int(ngf * mult / 2),
+                          ),
+                        ]
+            model += [nn.ReLU(True)]
         model += [nn.ReflectionPad2d(3)]
         model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
         model += [nn.Tanh()]

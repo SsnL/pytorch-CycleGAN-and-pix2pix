@@ -2,6 +2,8 @@ import argparse
 import os
 from util import util
 import torch
+import numpy as np
+import random
 
 class BaseOptions():
     def __init__(self):
@@ -9,6 +11,7 @@ class BaseOptions():
         self.initialized = False
 
     def initialize(self):
+        self.parser.add_argument('--seed', type=int, default=None, help='pytorch seed')
         self.parser.add_argument('--dataroot', required=True, help='path to images (should have subfolders trainA, trainB, valA, valB, etc)')
         self.parser.add_argument('--gen_data', action='store_true', help='if true, data are generated from dataset with name specified in dataroot option in snake style')
         self.parser.add_argument('--batchSize', type=int, default=1, help='input batch size')
@@ -35,7 +38,6 @@ class BaseOptions():
         self.parser.add_argument('--hub', type=str, default='A', help='[multi_cycle_gan_hub] which hub to use, numerical values means latent variables of certain number of dimensions ~N(0, 1), other values (e.g. "A") means using certain dataset as hub')
         self.parser.add_argument('--ncs', nargs='+', type=int, default=[3,3], help='[multi_cycle_gan_cycle, multi_cycle_gan_link, multi_cycle_gan_hub] # of output image channels for each dataset')
         self.parser.add_argument('--cycle_lengths', nargs='+', type=int, default=[2,3], help='[multi_cycle_gan_cycle] cycle loss lengths, suggested to be primes')
-        self.parser.add_argument('--cycle_weights', nargs='+', type=float, default=[0.5,0.25], help='[multi_cycle_gan_cycle] cycle loss weights for each cycle length')
         self.parser.add_argument('--cycle_num_samples', nargs='+', type=int, default=[-1,4], help='[multi_cycle_gan_cycle] #cycles sampled per dataset to estimate cycle loss weights for each cycle length, <=0 values means exact calculation')
         self.parser.add_argument('--which_direction', type=str, default='AtoB', help='AtoB or BtoA')
         self.parser.add_argument('--nThreads', default=2, type=int, help='# threads for loading data')
@@ -43,6 +45,7 @@ class BaseOptions():
         self.parser.add_argument('--norm', type=str, default='instance', help='instance normalization or batch normalization')
         self.parser.add_argument('--norm_first', action='store_true', help='if specified, do normalize first layer. Only works with resnet architectures. Unet architectures always skips first norm layer.')
         self.parser.add_argument('--serial_batches', action='store_true', help='if true, takes images in order to make batches, otherwise takes them randomly')
+        self.parser.add_argument('--resize_conv', action='store_true', help='if true, use resize-conv instead of convtranspose')
         self.parser.add_argument('--display_winsize', type=int, default=256,  help='display window size')
         self.parser.add_argument('--display_id', type=int, default=1, help='window id of the web display')
         self.parser.add_argument('--display_port', type=int, default=8097, help='visdom port of the web display')
@@ -57,6 +60,9 @@ class BaseOptions():
         self.parser.add_argument('--weight_mean_estimator_arg', type=float, default=10, help='argument to the mean estimator')
 
         self.initialized = True
+
+    def additional_parse(self):
+        pass
 
     def parse(self):
         if not self.initialized:
@@ -74,6 +80,16 @@ class BaseOptions():
         # set gpu ids
         if len(self.opt.gpu_ids) > 0:
             torch.cuda.set_device(self.opt.gpu_ids[0])
+
+        # set seed
+        if self.opt.seed is None:
+            self.opt.seed = torch.initial_seed() & ((1 << 32) - 1)
+        torch.manual_seed(self.opt.seed)
+        np.random.seed(self.opt.seed)
+        random.seed(self.opt.seed)
+
+        # for subclasses
+        self.additional_parse()
 
         args = vars(self.opt)
 

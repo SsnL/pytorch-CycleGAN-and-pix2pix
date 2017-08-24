@@ -14,6 +14,7 @@ class Visualizer():
         self.display_id = opt.display_id
         self.use_html = opt.isTrain and not opt.no_html
         self.win_size = opt.display_winsize
+        self.image_size = opt.fineSize
         self.name = opt.name
         if self.display_id > 0:
             import visdom
@@ -34,7 +35,8 @@ class Visualizer():
     def display_current_results(self, visuals, epoch):
         if self.display_id > 0: # show images in the browser
             if self.display_single_pane_ncols > 0:
-                h, w = next(iter(visuals.values())).shape[:2]
+                white_image = np.ones([3, self.image_size, self.image_size]) * 255
+                h, w = self.image_size, self.image_size
                 table_css = """<style>
     table {border-collapse: separate; border-spacing:4px; white-space:nowrap; text-align:center}
     table td {width: %dpx; height: %dpx; padding: 4px; outline: 4px solid black}
@@ -47,6 +49,8 @@ class Visualizer():
                 images = []
                 idx = 0
                 for label, image_numpy in visuals.items():
+                    if image_numpy is None:
+                        image_numpy = white_image
                     if isinstance(label, collections.Sequence) and not isinstance(label, str):
                         label, supl = label
                         supl = '<div style="font-family: monospace;font-size: 8px;white-space: pre-wrap;word-wrap: break-word;">{}</div>'.format(supl)
@@ -57,7 +61,6 @@ class Visualizer():
                     if idx % ncols == 0:
                         label_html += '<tr>%s</tr>' % label_html_row
                         label_html_row = ''
-                white_image = np.ones_like(image_numpy.transpose([2, 0, 1]))*255
                 while idx % ncols != 0:
                     images.append(white_image)
                     label_html_row += '<td></td>'
@@ -83,6 +86,8 @@ class Visualizer():
 
         if self.use_html: # save images to a html file
             for label, image_numpy in visuals.items():
+                if image_numpy is None:
+                    continue
                 if isinstance(label, collections.Sequence) and not isinstance(label, str):
                     label, supl = label
                 img_path = os.path.join(self.img_dir, 'epoch%.3d_%s.png' % (epoch, label))
@@ -96,6 +101,8 @@ class Visualizer():
                 links = []
 
                 for label, image_numpy in visuals.items():
+                    if image_numpy is None:
+                        continue
                     if isinstance(label, collections.Sequence) and not isinstance(label, str):
                         label, supl = label
                     img_path = 'epoch%.3d_%s.png' % (n, label)

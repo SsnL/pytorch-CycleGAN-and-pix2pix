@@ -14,6 +14,10 @@ def create_model(opt):
         assert(opt.dataset_mode == 'unaligned')
         from .encoder_cycle_gan_model import EncoderCycleGANModel
         model = EncoderCycleGANModel()
+    elif opt.model == 'encoder_ratio_cycle_gan':
+        assert(opt.dataset_mode == 'unaligned')
+        from .encoder_ratio_cycle_gan_model import EncoderRatioCycleGANModel
+        model = EncoderRatioCycleGANModel()
     elif opt.model == 'cycle_gan_z':
         assert(opt.dataset_mode == 'unaligned')
         from .cycle_gan_z_model import CycleGANZModel

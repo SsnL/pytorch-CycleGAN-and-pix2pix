@@ -1,5 +1,19 @@
 from .base_options import BaseOptions
+import string
 
+class PrefixDict(dict):
+    def __getitem__(self, idxs):
+        if type(idxs) == str:
+            idxs = tuple(idxs)
+        if idxs in self:
+            return dict.__getitem__(self, idxs)
+        for i in range(1, len(idxs) + 1):
+            wildcard = idxs[:(len(idxs) - i)] + ('*',) * i
+            if wildcard in self:
+                itm = dict.__getitem__(self, wildcard)
+                dict.__setitem__(self, idxs, itm)
+                return itm
+        return dict.__getitem__(self, idxs)
 
 class TrainOptions(BaseOptions):
     def initialize(self):
@@ -17,8 +31,10 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--beta1', type=float, default=0.5, help='momentum term of adam')
         self.parser.add_argument('--initial_lr', type=float, default=0.0, help='initial learning rate for adam')
         self.parser.add_argument('--lr', type=float, default=0.0002, help='learning rate after warmup for adam')
-        self.parser.add_argument('--lambdas', nargs='+', type=float, default=[10,10], help='[multi_cycle_gan_cycle, multi_cycle_gan_link, multi_cycle_gan_hub] cycle loss weights from reconstruction for each dataset')
-        self.parser.add_argument('--lambdas_link', nargs='+', type=float, default=[2,2], help='[multi_cycle_gan_link] link consistency loss weights (A -> B -> C == A -> C)')
+        # self.parser.add_argument('--lambdas', nargs='+', type=float, default=[10,10], help='[multi_cycle_gan_cycle, multi_cycle_gan_link, multi_cycle_gan_hub] cycle loss weights from reconstruction for each dataset')
+        # self.parser.add_argument('--lambdas_link', nargs='+', type=float, default=[2,2], help='[multi_cycle_gan_link] link consistency loss weights (A -> B -> C == A -> C)')
+        self.parser.add_argument("--lambdas", type=str, default='AB=10,BA=10', help='[multi_cycle_gan_cycle, multi_cycle_gan_link, multi_cycle_gan_hub] cycle loss weights from reconstruction for each dataset, * is wildcard, e.g., AB=10,AC=8,B*=10,C*=2,***=3')
+        self.parser.add_argument("--lambdas_link", type=str, default='AB=2,BA=2', help='[multi_cycle_gan_link] link consistency loss weights (A -> B -> C == A -> C), can be repeated, * is wildcard, e.g., AB=2.0,BA=1.5')
         self.parser.add_argument('--non_hub_multiplier', type=float, default=0.5, help='[multi_cycle_gan_hub] multiplier for cycle loss from reconstruction from non-hub vertices')
         self.parser.add_argument('--lambda_z_A', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (A -> B -> A)')
         self.parser.add_argument('--lambda_z_B', type=float, default=3.0, help='[cycle_gan_z, encoder_cycle_gan] weight for cycle loss on z (B -> A -> B)')
@@ -27,3 +43,8 @@ class TrainOptions(BaseOptions):
         self.parser.add_argument('--pool_size', type=int, default=50, help='the size of image buffer that stores previously generated images')
         self.parser.add_argument('--no_html', action='store_true', help='do not save intermediate training results to [opt.checkpoints_dir]/[opt.name]/web/')
         self.isTrain = True
+
+    def additional_parse(self):
+        self.opt.lambdas = PrefixDict({tuple(k): float(v) for k, v in (p.split('=', 1) for p in self.opt.lambdas.split(','))})
+        self.opt.lambdas_link = PrefixDict({tuple(k): float(v) for k, v in (p.split('=', 1) for p in self.opt.lambdas_link.split(','))})
+

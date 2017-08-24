@@ -7,12 +7,11 @@ import itertools
 import util.util as util
 from util.image_pool import ImagePool
 from .base_model import BaseModel
-from .multi_cycle_gan_cycle_model import MultiCycleGANCycleModel
 from . import networks
 import sys
 import string
 
-class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
+class MultiCycleGANLinkModel(BaseModel):
     def name(self):
         return 'MultiCycleGANLinkModel'
 
@@ -27,11 +26,6 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
             raise NotImplemented
 
         self.display_single_pane_ncols = opt.display_single_pane_ncols
-        # Some cycles can be sampled with replacement. If displaying in single
-        # image pane, we need filler image so that results from certain dataset
-        # are placed in beginning of new rows.
-        if self.display_single_pane_ncols > 0:
-            self.visual_filler = np.ones((size, size, 3), dtype = np.uint8) * 255
 
         assert len(opt.ncs) == num_datasets
 
@@ -41,12 +35,8 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
             self.inputs[label] = self.Tensor(nb, nc, size, size)
 
         if self.isTrain:
-            self.lambdas = {}
-            self.lambdas_link = {}
-
-            for label, lamda, lamda_link in zip(string.ascii_uppercase, opt.lambdas, opt.lambdas_link):
-                self.lambdas[label] = lamda
-                self.lambdas_link[label] = lamda_link
+            self.lambdas = opt.lambdas
+            self.lambdas_link = opt.lambdas_link
 
         self.num_visuals_per_label = 1 + \
             (2 if self.opt.identity > 0 else 1) * (self.num_datasets - 1) + \
@@ -60,6 +50,7 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
                                                 opt.which_model_netG, opt.norm,
                                                 not opt.no_dropout,
                                                 norm_first=opt.norm_first,
+                                                resize_conv=opt.resize_conv,
                                                 gpu_ids = self.gpu_ids)
 
         if self.isTrain:
@@ -111,8 +102,6 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
             values = input[label]
             self.inputs[label].resize_(values.size()).copy_(values)
         self.image_paths = {l: input['{}_paths'.format(l)] for l in self.inputs}
-        # sample cycles
-        self.sampled_cycles = self.sample_cycles()
 
     #get image paths
     def get_image_paths_at(self, i):
@@ -177,13 +166,13 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
             fake = self.fakes[(label, to_label)]
             pred_fake = self.Ds[to_label].fwd(fake)
             loss_G += self.criterionGAN(pred_fake, True)
-            loss_cycle += self.criterionCycle(self.recs[(label, to_label)], real)
+            loss_cycle += self.criterionCycle(self.recs[(label, to_label)], real) * self.lambdas[(label, to_label)]
             for link in self.links[(label, to_label)].values():
-                loss_link += self.criterionLink(link, fake)
+                loss_link += self.criterionLink(link, fake) * self.lambdas_link[(label, to_label)]
 
         loss_G /= self.num_datasets - 1
-        loss_cycle *= self.lambdas[label] / (self.num_datasets - 1)
-        loss_link *= self.lambdas_link[label] / ((self.num_datasets - 1) * (self.num_datasets - 2))
+        loss_cycle /= self.num_datasets - 1
+        loss_link /= (self.num_datasets - 1) * (self.num_datasets - 2)
 
         self.loss_Gs[label] = loss_G
         self.loss_cycles[label] = loss_cycle
@@ -254,20 +243,21 @@ class MultiCycleGANLinkModel(MultiCycleGANCycleModel):
                 nimgs += 1
                 # link images
                 for mid_label, link in self.links[(label, to_label)].items():
-                    visuals['link_' + label + mid_label + to_label] = util.tensor2im(link.data)
+                    visuals['link_' + label + mid_label + to_label, self.lambdas_link[label, to_label]] = util.tensor2im(link.data)
+                    nimgs += 1
                 # identity rec images
                 if self.opt.identity > 0.0:
                     raise NotImplemented
                     for label in self.inputs:
-                        visuals['idt_' + label + to_label] = util.tensor2im(self.idt_recs[(label, to_label)].data)
+                        visuals['idt_' + label + to_label, self.lambda_idt[label]] = util.tensor2im(self.idt_recs[(label, to_label)].data)
                         nimgs += 1
                 # rec images
-                visuals['rec_' + label + to_label] = util.tensor2im(self.recs[(label, to_label)].data)
+                visuals['rec_' + label + to_label, self.lambdas[label, to_label]] = util.tensor2im(self.recs[(label, to_label)].data)
                 nimgs += 1
             # if necessary, add fillers till new row
             # when testing, outputing to webpage, so skip
             while self.isTrain and ncols > 0 and nimgs % ncols != 0:
-                visuals['filler_' + label + '_' + str(nimgs)] = self.visual_filler
+                visuals['filler_' + label + '_' + str(nimgs)] = None
                 nimgs += 1
         return visuals
 

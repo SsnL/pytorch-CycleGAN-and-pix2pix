@@ -33,13 +33,17 @@ class LatentCycleGANModel(BaseModel):
                                         opt.which_model_netG, opt.norm,
                                         not opt.no_dropout, size,
                                         opt.latent_nc, opt.latent_z,
-                                        opt.norm_first, self.gpu_ids)
+                                        opt.norm_first,
+                                        resize_conv=opt.resize_conv,
+                                        gpu_ids=self.gpu_ids)
         self.netG_B_to_latent, self.netG_B_from_latent = networks.define_G(
                                         opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
                                         not opt.no_dropout, size,
                                         opt.latent_nc, opt.latent_z,
-                                        opt.norm_first, self.gpu_ids)
+                                        opt.norm_first,
+                                        resize_conv=opt.resize_conv,
+                                        gpu_ids=self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan

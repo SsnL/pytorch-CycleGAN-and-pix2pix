@@ -32,11 +32,13 @@ class WeightedCycleGANModel(BaseModel):
                                         opt.which_model_netG, opt.norm,
                                         not opt.no_dropout,
                                         norm_first=opt.norm_first,
+                                        resize_conv=opt.resize_conv,
                                         gpu_ids = self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc, opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
                                         not opt.no_dropout,
                                         norm_first=opt.norm_first,
+                                        resize_conv=opt.resize_conv,
                                         gpu_ids = self.gpu_ids)
 
         # Always need netDs, mean estimators, and loss functions.

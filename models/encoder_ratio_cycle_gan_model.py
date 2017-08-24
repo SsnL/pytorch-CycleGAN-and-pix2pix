@@ -1,4 +1,3 @@
-import numpy as np
 import torch
 import os
 from collections import OrderedDict
@@ -10,9 +9,9 @@ from .base_model import BaseModel
 from . import networks, mean_estimator
 import sys
 
-class CycleGANZModel(BaseModel):
+class EncoderRatioCycleGANModel(BaseModel):
     def name(self):
-        return 'CycleGANZModel'
+        return 'EncoderRatioCycleGANModel'
 
     def initialize(self, opt):
         BaseModel.initialize(self, opt)
@@ -22,15 +21,15 @@ class CycleGANZModel(BaseModel):
         self.latent_z = opt.latent_z
         self.A_nc = opt.input_nc
         self.B_nc = opt.output_nc
-        self.image_z_cycle_ratio = opt.image_z_cycle_ratio
-        self.z_cycle_multiplier = opt.z_cycle_multiplier
-        assert(0 <= self.image_z_cycle_ratio <= 1)
-        assert(0 <= self.z_cycle_multiplier)
 
         self.input_A_im = self.Tensor(nb, opt.input_nc, size, size)
-        self.random_A_z = self.Tensor(nb, opt.latent_z)
+        self.random_input_A_z = self.Tensor(nb, opt.latent_z)
+        self.random_noise_A_z = self.Tensor(nb, opt.latent_z)
         self.input_B_im = self.Tensor(nb, opt.output_nc, size, size)
-        self.random_B_z = self.Tensor(nb, opt.latent_z)
+        self.random_input_B_z = self.Tensor(nb, opt.latent_z)
+        self.random_noise_B_z = self.Tensor(nb, opt.latent_z)
+        self.x_A = torch.ones(1) # clip(x, 0, 1)  => amount of information loss in A -> B / latent_z
+        self.x_B = torch.ones(1) # clip(x, 0, 1) => amount of information loss in A -> B / latent_z
 
         # load/define networks
         # The naming conversion is different from those used in the paper
@@ -39,18 +38,20 @@ class CycleGANZModel(BaseModel):
         self.netG_A = networks.define_G(opt.input_nc + opt.latent_z,
                                         opt.output_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        not opt.no_dropout, size,
-                                        None, opt.latent_z, opt.norm_first,
+                                        not opt.no_dropout,
+                                        norm_first = opt.norm_first,
                                         resize_conv=opt.resize_conv,
                                         gpu_ids = self.gpu_ids)
         self.netG_B = networks.define_G(opt.output_nc + opt.latent_z,
                                         opt.input_nc, opt.ngf,
                                         opt.which_model_netG, opt.norm,
-                                        not opt.no_dropout, size,
-                                        None, opt.latent_z, opt.norm_first,
+                                        not opt.no_dropout,
+                                        norm_first = opt.norm_first,
                                         resize_conv=opt.resize_conv,
                                         gpu_ids = self.gpu_ids)
 
+        self.netE_A = networks.define_encoder(opt.input_nc, size, opt.ngf, opt.latent_z, opt.norm, self.gpu_ids)
+        self.netE_B = networks.define_encoder(opt.output_nc, size, opt.ngf, opt.latent_z, opt.norm, self.gpu_ids)
 
         if self.isTrain:
             use_sigmoid = opt.no_lsgan
@@ -75,17 +76,29 @@ class CycleGANZModel(BaseModel):
             which_epoch = opt.which_epoch
             self.load_network(self.netG_A, 'G_A', which_epoch)
             self.load_network(self.netG_B, 'G_B', which_epoch)
+            self.load_network(self.netE_A, 'E_A', which_epoch)
+            self.load_network(self.netE_B, 'E_B', which_epoch)
+            self.x_A = self.load_variable('x_A', which_epoch)
+            self.x_B = self.load_variable('x_B', which_epoch)
             if self.isTrain:
                 self.load_network(self.netD_A, 'D_A', which_epoch)
                 self.load_network(self.netD_B, 'D_B', which_epoch)
                 self.load_network(self.netD_z, 'D_z', which_epoch)
+
+        if self.gpu_ids:
+            self.x_A = self.x_A.cuda(device = self.gpu_ids[0])
+            self.x_B = self.x_B.cuda(device = self.gpu_ids[0])
+        self.x_A = Variable(self.x_A, requires_grad = True, volatile = False)
+        self.x_B = Variable(self.x_B, requires_grad = True, volatile = False)
 
         if self.isTrain:
             self.fake_A_pool = ImagePool(opt.pool_size)
             self.fake_B_pool = ImagePool(opt.pool_size)
             self.fake_z_pool = ImagePool(opt.pool_size * 2)
             # initialize optimizers
-            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters()),
+            self.optimizer_G = torch.optim.Adam(itertools.chain(self.netG_A.parameters(), self.netG_B.parameters(),
+                                                                self.netE_A.parameters(), self.netE_B.parameters(),
+                                                                [self.x_A, self.x_B]),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
             self.optimizer_D_A = torch.optim.Adam(self.netD_A.parameters(),
                                                 lr=self.current_lr, betas=(opt.beta1, 0.999))
@@ -97,6 +110,8 @@ class CycleGANZModel(BaseModel):
         print('---------- Networks initialized -------------')
         networks.print_network(self.netG_A)
         networks.print_network(self.netG_B)
+        networks.print_network(self.netE_A)
+        networks.print_network(self.netE_B)
         if self.isTrain:
             networks.print_network(self.netD_A)
             networks.print_network(self.netD_B)
@@ -111,30 +126,46 @@ class CycleGANZModel(BaseModel):
         self.input_B_im.resize_(im_B.size()).copy_(im_B)
         z_A = torch.randn(im_A.size(0), self.latent_z)
         z_B = torch.randn(im_B.size(0), self.latent_z)
-        self.random_A_z.resize_(z_A.size()).copy_(z_A)
-        self.random_B_z.resize_(z_B.size()).copy_(z_B)
+        self.random_input_A_z.resize_(z_A.size()).copy_(z_A)
+        self.random_input_B_z.resize_(z_B.size()).copy_(z_B)
+        z_A = torch.randn(im_A.size(0), self.latent_z)
+        z_B = torch.randn(im_B.size(0), self.latent_z)
+        self.random_noise_A_z.resize_(z_A.size()).copy_(z_A)
+        self.random_noise_B_z.resize_(z_B.size()).copy_(z_B)
         self.A_paths = input['A_paths' if AtoB else 'B_paths']
         self.B_paths = input['B_paths' if AtoB else 'A_paths']
 
     def im_z_to_input(self, im, z):
         return torch.cat((im, z[:, :, None, None].expand(z.size(0), self.latent_z, self.size, self.size)), 1)
 
+    def lerp(self, a, b, r):
+        return a * r + b * (1 - r)
+
     def forward(self, volatile = False):
+        self.r_A = torch.clamp(self.x_A, 0.00001, 1)
+        self.r_B = torch.clamp(self.x_B, 0.00001, 1)
+
         self.real_A_im = Variable(self.input_A_im, volatile = volatile)
-        self.real_A_z = Variable(self.random_A_z, volatile = volatile)
-        self.real_A = self.im_z_to_input(self.real_A_im, self.real_A_z)
+        self.input_A_z = Variable(self.random_input_A_z, volatile = volatile)
+        self.noise_A_z = Variable(self.random_noise_A_z, volatile = volatile)
+        self.A_z = self.netE_A.fwd(self.real_A_im)
 
         self.real_B_im = Variable(self.input_B_im, volatile = volatile)
-        self.real_B_z = Variable(self.random_B_z, volatile = volatile)
-        self.real_B = self.im_z_to_input(self.real_B_im, self.real_B_z)
+        self.input_B_z = Variable(self.random_input_B_z, volatile = volatile)
+        self.noise_B_z = Variable(self.random_noise_B_z, volatile = volatile)
+        self.B_z = self.netE_B.fwd(self.real_B_im)
 
-        self.fake_B_im, self.fake_B_z = self.netG_A.fwd(self.real_A)
-        self.fake_B = self.im_z_to_input(self.fake_B_im, self.fake_B_z)
-        self.rec_A_im, self.rec_A_z = self.netG_B.fwd(self.fake_B)
+        self.fake_B_im = self.netG_A.fwd(self.im_z_to_input(self.real_A_im, self.input_A_z))
+        noisy_A_z = self.lerp(self.A_z, self.noise_A_z, self.r_A.expand(self.A_z.size()))
+        self.rec_A_im = self.netG_B.fwd(self.im_z_to_input(self.fake_B_im, noisy_A_z))
 
-        self.fake_A_im, self.fake_A_z = self.netG_B.fwd(self.real_B)
-        self.fake_A = self.im_z_to_input(self.fake_A_im, self.fake_A_z)
-        self.rec_B_im, self.rec_B_z = self.netG_A.fwd(self.fake_A)
+        self.fake_A_im = self.netG_B.fwd(self.im_z_to_input(self.real_B_im, self.input_B_z))
+        noisy_B_z = self.lerp(self.B_z, self.noise_B_z, self.r_B.expand(self.B_z.size()))
+        self.rec_B_im = self.netG_A.fwd(self.im_z_to_input(self.fake_A_im, noisy_B_z))
+
+        self.rec_A_z = self.netE_B(self.fake_B_im)
+
+        self.rec_B_z = self.netE_A(self.fake_A_im)
 
     def test(self):
         self.forward(True)
@@ -143,9 +174,9 @@ class CycleGANZModel(BaseModel):
     def get_image_paths_at(self, i):
         replicate = 4 if self.opt.identity > 0 else 3
         image_paths = []
-        if i < self.input_A.size(0):
+        if i < self.real_A_im.size(0):
             image_paths += [self.A_paths[i]] * replicate
-        if i < self.input_B.size(0):
+        if i < self.real_B_im.size(0):
             image_paths += [self.B_paths[i]] * replicate
         return image_paths
 
@@ -171,8 +202,8 @@ class CycleGANZModel(BaseModel):
         self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A_im, fake_A_im)
 
     def backward_D_z(self):
-        fake_z = self.fake_z_pool.query(torch.cat((self.fake_A_z, self.fake_B_z), 0))
-        real_z = torch.cat((self.real_A_z, self.real_B_z), 0)
+        fake_z = self.fake_z_pool.query(torch.cat((self.A_z, self.B_z), 0))
+        real_z = torch.cat((self.input_A_z, self.input_B_z), 0)
         self.loss_D_z = self.backward_D_basic(self.netD_z, real_z, fake_z)
 
     def backward_G(self):
@@ -186,31 +217,29 @@ class CycleGANZModel(BaseModel):
         # Identity loss
         if lambda_idt > 0:
             # G_A should be identity if real_B is fed.
-            self.idt_A_im, self.idt_A_z = self.netG_A.fwd(self.real_B)
-            self.idt_A = self.im_z_to_input(self.idt_A_im, self.idt_A_z)
-            self.loss_idt_A = self.criterionIdt(self.idt_A, self.real_B) * lambda_B * lambda_idt
+            self.idt_A_im = self.netG_A.fwd(self.im_z_to_input(self.real_B_im, self.B_z))
+            self.loss_idt_A = self.criterionIdt(self.idt_A_im, self.real_B_im) * lambda_B * lambda_idt
             # G_B should be identity if real_A is fed.
-            self.idt_B_im, self.idt_B_z = self.netG_B.fwd(self.real_A)
-            self.idt_B = self.im_z_to_input(self.idt_B_im, self.idt_B_z)
-            self.loss_idt_B = self.criterionIdt(self.idt_B, self.real_A) * lambda_A * lambda_idt
+            self.idt_B_im = self.netG_B.fwd(self.im_z_to_input(self.real_A_im, self.A_z))
+            self.loss_idt_B = self.criterionIdt(self.idt_B_im, self.real_A_im) * lambda_A * lambda_idt
         else:
             self.loss_idt_A = 0
             self.loss_idt_B = 0
 
         # Loss
         # A
-        self.loss_G_A_im = self.criterionGAN(self.netD_A.fwd(self.fake_B_im), True)
-        self.loss_G_A_z = self.criterionGAN(self.netD_z.fwd(self.fake_B_z), True) * gan_z_A_multiplier
-        self.loss_cycle_A_im = self.criterionCycle(self.rec_A_im, self.real_A_im) * lambda_z_A
-        self.loss_cycle_A_z = self.criterionCycle(self.rec_A_z, self.real_A_z) * lambda_A
+        self.loss_G_A = self.criterionGAN(self.netD_A.fwd(self.fake_B_im), True)
+        self.loss_E_A = self.criterionGAN(self.netD_z.fwd(self.A_z), True) * gan_z_A_multiplier
+        self.loss_cycle_A_im = self.criterionCycle(self.rec_A_im, self.real_A_im) * lambda_A
+        self.loss_cycle_A_z = self.criterionCycle(self.rec_A_z, self.input_A_z) * lambda_z_A * self.r_B
         # B
-        self.loss_G_B_im = self.criterionGAN(self.netD_B.fwd(self.fake_A_im), True)
-        self.loss_G_B_z = self.criterionGAN(self.netD_z.fwd(self.fake_A_z), True) * gan_z_B_multiplier
-        self.loss_cycle_B_im = self.criterionCycle(self.rec_B_im, self.real_B_im) * lambda_z_B
-        self.loss_cycle_B_z = self.criterionCycle(self.rec_B_z, self.real_B_z) * lambda_B
+        self.loss_G_B = self.criterionGAN(self.netD_B.fwd(self.fake_A_im), True)
+        self.loss_E_B = self.criterionGAN(self.netD_z.fwd(self.B_z), True) * gan_z_B_multiplier
+        self.loss_cycle_B_im = self.criterionCycle(self.rec_B_im, self.real_B_im) * lambda_B
+        self.loss_cycle_B_z = self.criterionCycle(self.rec_B_z, self.input_B_z) * lambda_z_B * self.r_A
         # combined loss
-        self.loss_G = self.loss_G_A_im + self.loss_G_B_im + \
-            self.loss_G_A_z + self.loss_G_B_z + \
+        self.loss_G = self.loss_G_A + self.loss_G_B + \
+            self.loss_E_A + self.loss_E_B + \
             self.loss_cycle_A_im + self.loss_cycle_B_im + \
             self.loss_cycle_A_z + self.loss_cycle_B_z + \
             self.loss_idt_A + self.loss_idt_B
@@ -238,28 +267,32 @@ class CycleGANZModel(BaseModel):
 
     def get_current_errors(self):
         D_A = self.loss_D_A.data[0]
-        G_A_im = self.loss_G_A_im.data[0]
-        G_A_z = self.loss_G_A_z.data[0]
+        G_A = self.loss_G_A.data[0]
+        E_A = self.loss_E_A.data[0]
         Cyc_A_im = self.loss_cycle_A_im.data[0]
         Cyc_A_z = self.loss_cycle_A_z.data[0]
         D_B = self.loss_D_B.data[0]
-        G_B_im = self.loss_G_B_im.data[0]
-        G_B_z = self.loss_G_B_z.data[0]
+        G_B = self.loss_G_B.data[0]
+        E_B = self.loss_E_B.data[0]
         Cyc_B_im = self.loss_cycle_B_im.data[0]
         Cyc_B_z = self.loss_cycle_B_z.data[0]
         D_z = self.loss_D_z.data[0]
+        r_A = self.r_A.data[0]
+        r_B = self.r_B.data[0]
         errors = OrderedDict()
+        errors['r_A'] = r_A
+        errors['r_B'] = r_B
         errors['D_A'] = D_A
-        errors['G_A_im'] = G_A_im
-        errors['G_A_z'] = G_A_z
+        errors['G_A'] = G_A
+        errors['E_A'] = E_A
         errors['Cyc_A_im'] = Cyc_A_im
         errors['Cyc_A_z'] = Cyc_A_z
         if self.opt.identity > 0.0:
             idt_A = self.loss_idt_A.data[0]
             errors['idt_A'] = idt_A
         errors['D_B'] = D_B
-        errors['G_B_im'] = G_B_im
-        errors['G_B_z'] = G_B_z
+        errors['G_B'] = G_B
+        errors['E_B'] = E_B
         errors['Cyc_B_im'] = Cyc_B_im
         errors['Cyc_B_z'] = Cyc_B_z
         if self.opt.identity > 0.0:
@@ -270,34 +303,36 @@ class CycleGANZModel(BaseModel):
 
     def get_current_visuals_at(self, i):
         visuals = OrderedDict()
-        if i < self.real_A.size(0):
-            visuals['real_A', self.z_str(self.real_A_z[i])] = \
-                util.tensor2im(self.real_A[:, :self.A_nc].data, i)
-            visuals['fake_B', self.z_str(self.fake_B_z[i])] = \
+        if i < self.real_A_im.size(0):
+            visuals['real_A', 'sampled\n' + self.z_str(self.input_A_z[i])] = \
+                util.tensor2im(self.real_A_im.data, i)
+            visuals['fake_B', 'rec\'d\n' + self.z_str(self.rec_A_z[i])] = \
                 util.tensor2im(self.fake_B_im.data, i)
-            visuals['rec_A', self.z_str(self.rec_A_z[i])] = \
+            visuals['rec_A', 'encoded\n' + self.z_str(self.A_z[i])] = \
                 util.tensor2im(self.rec_A_im.data, i)
             if self.opt.identity > 0.0:
-                visuals['idt_A', self.z_str(self.idx_A_z[i])] = \
-                    util.tensor2im(self.idt_A_im.data, i)
-        if i < self.real_B.size(0):
-            visuals['real_B', self.z_str(self.real_B_z[i])] = \
-                util.tensor2im(self.real_B[:, :self.B_nc].data, i)
-            visuals['fake_A', self.z_str(self.fake_A_z[i])] = \
+                visuals['idt_A'] = util.tensor2im(self.idt_A_im.data, i)
+        if i < self.real_B_im.size(0):
+            visuals['real_B', 'sampled\n' + self.z_str(self.input_B_z[i])] = \
+                util.tensor2im(self.real_B_im.data, i)
+            visuals['fake_A', 'rec\'d\n' + self.z_str(self.rec_B_z[i])] = \
                 util.tensor2im(self.fake_A_im.data, i)
-            visuals['rec_B', self.z_str(self.rec_B_z[i])] = \
+            visuals['rec_B', 'encoded\n' + self.z_str(self.B_z[i])] = \
                 util.tensor2im(self.rec_B_im.data, i)
             if self.opt.identity > 0.0:
-                visuals['idt_B', self.z_str(self.idt_B_z[i])] = \
-                    util.tensor2im(self.idt_B_im.data, i)
+                visuals['idt_B'] = util.tensor2im(self.idt_B_im.data, i)
         return visuals
 
     def save(self, label):
         self.save_network(self.netG_A, 'G_A', label, self.gpu_ids)
+        self.save_network(self.netE_A, 'E_A', label, self.gpu_ids)
         self.save_network(self.netD_A, 'D_A', label, self.gpu_ids)
         self.save_network(self.netG_B, 'G_B', label, self.gpu_ids)
+        self.save_network(self.netE_B, 'E_B', label, self.gpu_ids)
         self.save_network(self.netD_B, 'D_B', label, self.gpu_ids)
         self.save_network(self.netD_z, 'D_z', label, self.gpu_ids)
+        self.save_variable(self.x_A, 'x_A', label, self.gpu_ids)
+        self.save_variable(self.x_B, 'x_B', label, self.gpu_ids)
 
     def set_learning_rate(self, lr):
         for param_group in self.optimizer_D_z.param_groups:
